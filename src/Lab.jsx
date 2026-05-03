@@ -17,6 +17,21 @@ const FOOTER_LINKS = [
   { label: 'EMAIL', href: 'mailto:michael@markman.io' },
 ]
 
+// Curated CSS-filter color grades. Preset string is concatenated with the
+// always-on slider adjustments below. Order matters: preset first so user
+// sliders ride on top.
+const FILTER_PRESETS = {
+  off: '',
+  warm: 'sepia(0.12) saturate(1.05) hue-rotate(-6deg)',
+  cool: 'hue-rotate(-12deg) saturate(0.92)',
+  phosphor: 'hue-rotate(-8deg) saturate(1.35) contrast(1.08)',
+  vhs: 'saturate(0.7) contrast(0.92) sepia(0.08)',
+  bleach: 'saturate(0.45) contrast(1.25) brightness(1.05)',
+  sepia: 'sepia(0.6) contrast(1.05)',
+  bw: 'grayscale(1) contrast(1.08)',
+  kodachrome: 'saturate(1.4) contrast(1.08) sepia(0.08) hue-rotate(-4deg)',
+}
+
 /**
  * Experimental page — same scene composition as App.jsx but with live leva
  * controls so you can dial in scale/position/rotation/screen-binding for a
@@ -72,7 +87,7 @@ export default function Lab() {
       // Scene-wide IBL controls — affect every PBR material in the scene
       // (the case mesh too, not just the glass). Drag down to dim the
       // overall room-light contribution.
-      envIntensity: { value: 1.0, min: 0, max: 3, step: 0.05, label: 'env brightness' },
+      envIntensity: { value: 0.2, min: 0, max: 3, step: 0.05, label: 'env brightness' },
       envRotationY: { value: 0, min: -Math.PI, max: Math.PI, step: 0.01, label: 'env rot Y' },
       envBlur: { value: 0, min: 0, max: 1, step: 0.01, label: 'env blur' },
       // --- Both ---
@@ -89,9 +104,41 @@ export default function Lab() {
       fov: { value: 30, min: 10, max: 90, step: 0.5 },
       // World-units the orbit-target shifts toward where the mouse is.
       // 0 disables parallax. ~0.05-0.15 reads as a subtle living shot.
-      mouseParallax: { value: 0.04, min: 0, max: 0.4, step: 0.01, label: 'parallax' },
+      mouseParallax: { value: 0.02, min: 0, max: 0.4, step: 0.01, label: 'parallax' },
+    }),
+    grade: folder({
+      // Renderer tone-mapping enum + exposure. ACESFilmic is R3F's default
+      // (saturated/film-y highlights). AgX/Neutral are newer and more
+      // accurate. Linear/None give you the raw look. Switching modes
+      // recompiles materials; exposure is a uniform-only update.
+      toneMode: {
+        value: 'ACESFilmic',
+        options: ['None', 'Linear', 'Reinhard', 'Cineon', 'ACESFilmic', 'AgX', 'Neutral'],
+        label: 'tone',
+      },
+      toneExposure: { value: 1, min: 0, max: 3, step: 0.05, label: 'exposure' },
+    }),
+    filter: folder({
+      // CSS filter on .three-stage — applies to the rendered canvas pixels
+      // after Three.js is done. Preset gives you a starting look, sliders
+      // ride on top so you can tweak any preset further.
+      filterPreset: {
+        value: 'off',
+        options: ['off', 'warm', 'cool', 'phosphor', 'vhs', 'bleach', 'sepia', 'bw', 'kodachrome'],
+        label: 'preset',
+      },
+      filterSat: { value: 1, min: 0, max: 2, step: 0.01, label: 'saturate' },
+      filterHue: { value: 0, min: -180, max: 180, step: 1, label: 'hue°' },
+      filterContrast: { value: 1, min: 0, max: 2, step: 0.01, label: 'contrast' },
+      filterBrightness: { value: 1, min: 0, max: 2, step: 0.01, label: 'brightness' },
     }),
   })
+
+  const canvasFilter = useMemo(() => {
+    const preset = FILTER_PRESETS[t.filterPreset] ?? ''
+    const adj = `saturate(${t.filterSat}) hue-rotate(${t.filterHue}deg) contrast(${t.filterContrast}) brightness(${t.filterBrightness})`
+    return [preset, adj].filter(Boolean).join(' ')
+  }, [t.filterPreset, t.filterSat, t.filterHue, t.filterContrast, t.filterBrightness])
 
   return (
     <>
@@ -99,7 +146,6 @@ export default function Lab() {
         ref={sourceRef}
         profile={PROFILE}
         footerLinks={FOOTER_LINKS}
-        status="STATUS: LAB"
         variant="lab"
         pagePadTop={t.contentTopRem}
         contentScale={t.contentScale}
@@ -114,11 +160,16 @@ export default function Lab() {
         cameraOverride={{
           // Default zoomed in close on the screen face. Free orbit/zoom still
           // available via mouse.
-          position: [-1.05, 1.54, 3.51],
-          target: [-0.06, 1.2, 0.36],
+          position: [-0.93, 1.59, 3.54],
+          target: [-0.05, 1.25, 0.36],
           fov: t.fov,
         }}
         mouseParallax={t.mouseParallax}
+        tone={useMemo(
+          () => ({ mode: t.toneMode, exposure: t.toneExposure }),
+          [t.toneMode, t.toneExposure],
+        )}
+        canvasFilter={canvasFilter}
         modelTransform={{
           scale: t.scale,
           position: [t.posX, t.posY, t.posZ],

@@ -54,6 +54,16 @@ const ORBIT_LIMITS = {
   maxPolar: Math.PI * 0.55,
 }
 
+const TONE_MAP = {
+  None: THREE.NoToneMapping,
+  Linear: THREE.LinearToneMapping,
+  Reinhard: THREE.ReinhardToneMapping,
+  Cineon: THREE.CineonToneMapping,
+  ACESFilmic: THREE.ACESFilmicToneMapping,
+  AgX: THREE.AgXToneMapping,
+  Neutral: THREE.NeutralToneMapping,
+}
+
 /**
  * Drives a flickering intensity on a light (gentle constant flutter + a
  * sharper dip every few seconds). Returns refs/handlers for two light types.
@@ -237,6 +247,29 @@ function MouseParallax({ strength = 0.08, lerpAmt = 0.025 }) {
 }
 
 /**
+ * Syncs tone-mapping mode + exposure onto the WebGLRenderer. Changing the
+ * mode requires materials to recompile (the tone-mapping shader chunk is
+ * baked into each material), so we walk the scene and flag needsUpdate.
+ * Exposure is a uniform — no recompile needed.
+ */
+function ToneMappingSync({ mode, exposure }) {
+  const gl = useThree((s) => s.gl)
+  const scene = useThree((s) => s.scene)
+  useEffect(() => {
+    gl.toneMapping = mode
+    scene.traverse((obj) => {
+      if (!obj.material) return
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
+      mats.forEach((m) => { m.needsUpdate = true })
+    })
+  }, [gl, scene, mode])
+  useEffect(() => {
+    gl.toneMappingExposure = exposure
+  }, [gl, exposure])
+  return null
+}
+
+/**
  * Pushes live FOV updates onto the perspective camera. Canvas's `camera`
  * prop only seeds initial values; later prop changes are ignored, so we
  * sync explicitly from a leva slider.
@@ -332,6 +365,8 @@ export default function CrtScene({
   labBackground = false,
   showLeva = false,
   mouseParallax = 0,
+  tone,
+  canvasFilter,
   cameraOverride,
   onCameraChange,
 }) {
@@ -391,7 +426,7 @@ export default function CrtScene({
       <Leva hidden={!showLeva} titleBar={{ title: 'Tune' }} collapsed={false} />
       <div className="source-mask" aria-hidden="true" />
       <div className="phosphor-glow" aria-hidden="true" />
-      <div className="three-stage">
+      <div className="three-stage" style={canvasFilter ? { filter: canvasFilter } : undefined}>
         <Canvas
           dpr={[1, 3]}
           gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
@@ -585,6 +620,12 @@ export default function CrtScene({
           {onCameraChange && <CameraSpy onChange={onCameraChange} />}
           {cameraOverride?.fov != null && <CameraFovSync fov={cameraOverride.fov} />}
           {mouseParallax > 0 && <MouseParallax strength={mouseParallax} />}
+          {tone?.mode && (
+            <ToneMappingSync
+              mode={TONE_MAP[tone.mode] ?? THREE.ACESFilmicToneMapping}
+              exposure={tone.exposure ?? 1}
+            />
+          )}
         </Canvas>
       </div>
     </>

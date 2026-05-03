@@ -15,7 +15,7 @@ export default function SiteFooter({ status, links }) {
         ))}
       </nav>
 
-      <div className="status-line">{status}</div>
+      {status && <div className="status-line">{status}</div>}
     </footer>
   )
 }
