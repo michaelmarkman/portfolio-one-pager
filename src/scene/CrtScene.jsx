@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { ContactShadows, Environment, Grid, OrbitControls, useProgress } from '@react-three/drei'
 import { Leva, useControls, folder } from 'leva'
@@ -317,20 +317,21 @@ function CameraSpy({ onChange }) {
 }
 
 /**
- * Full-viewport boot overlay shown while three.js assets are still loading
- * (the 25MB GLB takes a beat to parse + upload textures even from cache).
- * Subscribes to drei's useProgress (LoadingManager singleton — works in HTML
- * context, doesn't need to be inside Canvas). Fades out via CSS once active
- * goes false; pointer-events drop to none so it never blocks interaction.
+ * Full-viewport boot overlay. Visibility is latched on `modelReady` (set
+ * by CrtModel after its first render frame), NOT on useProgress.active —
+ * the loader queue can flip idle while Three.js is still compiling shaders
+ * and a second asset (the lobby HDR) can kick a new load mid-gap, both of
+ * which would otherwise cause the overlay to flicker. We still read
+ * progress for the % display.
  */
-function LoadingOverlay() {
-  const { progress, active } = useProgress()
+function LoadingOverlay({ modelReady }) {
+  const { progress } = useProgress()
   return (
     <div
       className="boot-overlay"
       style={{
-        opacity: active ? 1 : 0,
-        pointerEvents: active ? 'auto' : 'none',
+        opacity: modelReady ? 0 : 1,
+        pointerEvents: modelReady ? 'none' : 'auto',
       }}
     >
       <div>BOOTING…</div>
@@ -339,7 +340,7 @@ function LoadingOverlay() {
   )
 }
 
-function CrtScreen({ sourceRef, modelUrl, debugMeshes, modelTransform, screenForward, remapScreenUV, screenUVRotation, screenUVFlipX, screenUVFlipY, hideMeshes, useHitUv, enableGlassMesh, enableBackOccluder, glassOverride, glassMode }) {
+function CrtScreen({ sourceRef, modelUrl, debugMeshes, modelTransform, screenForward, remapScreenUV, screenUVRotation, screenUVFlipX, screenUVFlipY, hideMeshes, useHitUv, enableGlassMesh, enableBackOccluder, glassOverride, glassMode, onModelReady }) {
   const { texture } = useHtmlCanvasTexture(sourceRef)
   return (
     <CrtModel
@@ -360,6 +361,7 @@ function CrtScreen({ sourceRef, modelUrl, debugMeshes, modelTransform, screenFor
       enableGlassMesh={enableGlassMesh}
       enableBackOccluder={enableBackOccluder}
       glassMode={glassMode}
+      onModelReady={onModelReady}
     />
   )
 }
@@ -393,6 +395,9 @@ export default function CrtScene({
   cameraOverride,
   onCameraChange,
 }) {
+  const [modelReady, setModelReady] = useState(false)
+  const handleModelReady = useCallback(() => setModelReady(true), [])
+
   const cam = {
     posX: cameraOverride?.position?.[0] ?? CAMERA.posX,
     posY: cameraOverride?.position?.[1] ?? CAMERA.posY,
@@ -447,7 +452,7 @@ export default function CrtScene({
   return (
     <>
       <Leva hidden={!showLeva} titleBar={{ title: 'Tune' }} collapsed={false} />
-      <LoadingOverlay />
+      <LoadingOverlay modelReady={modelReady} />
       <div className="source-mask" aria-hidden="true" />
       <div className="phosphor-glow" aria-hidden="true" />
       <div className="three-stage" style={canvasFilter ? { filter: canvasFilter } : undefined}>
@@ -601,10 +606,10 @@ export default function CrtScene({
 
           <Suspense fallback={null}>
             {freeOrbit ? (
-              <CrtScreen sourceRef={sourceRef} modelUrl={modelUrl} debugMeshes={debugMeshes} modelTransform={modelTransform} screenForward={screenForward} remapScreenUV={remapScreenUV} screenUVRotation={screenUVRotation} screenUVFlipX={screenUVFlipX} screenUVFlipY={screenUVFlipY} hideMeshes={hideMeshes} useHitUv={useHitUv} enableGlassMesh={enableGlassMesh} enableBackOccluder={enableBackOccluder} glassOverride={glassOverride} glassMode={glassMode} />
+              <CrtScreen sourceRef={sourceRef} modelUrl={modelUrl} debugMeshes={debugMeshes} modelTransform={modelTransform} screenForward={screenForward} remapScreenUV={remapScreenUV} screenUVRotation={screenUVRotation} screenUVFlipX={screenUVFlipX} screenUVFlipY={screenUVFlipY} hideMeshes={hideMeshes} useHitUv={useHitUv} enableGlassMesh={enableGlassMesh} enableBackOccluder={enableBackOccluder} glassOverride={glassOverride} glassMode={glassMode} onModelReady={handleModelReady} />
             ) : (
               <IdleSway>
-                <CrtScreen sourceRef={sourceRef} modelUrl={modelUrl} debugMeshes={debugMeshes} modelTransform={modelTransform} screenForward={screenForward} remapScreenUV={remapScreenUV} screenUVRotation={screenUVRotation} screenUVFlipX={screenUVFlipX} screenUVFlipY={screenUVFlipY} hideMeshes={hideMeshes} useHitUv={useHitUv} enableGlassMesh={enableGlassMesh} enableBackOccluder={enableBackOccluder} glassOverride={glassOverride} glassMode={glassMode} />
+                <CrtScreen sourceRef={sourceRef} modelUrl={modelUrl} debugMeshes={debugMeshes} modelTransform={modelTransform} screenForward={screenForward} remapScreenUV={remapScreenUV} screenUVRotation={screenUVRotation} screenUVFlipX={screenUVFlipX} screenUVFlipY={screenUVFlipY} hideMeshes={hideMeshes} useHitUv={useHitUv} enableGlassMesh={enableGlassMesh} enableBackOccluder={enableBackOccluder} glassOverride={glassOverride} glassMode={glassMode} onModelReady={handleModelReady} />
               </IdleSway>
             )}
           </Suspense>

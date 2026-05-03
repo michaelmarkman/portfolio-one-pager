@@ -85,9 +85,36 @@ export default function CrtModel({
   enableGlassMesh = true,
   enableBackOccluder = true,
   glassMode = 'phong', // 'phong' | 'physical'
+  onModelReady,
 }) {
   const baseScreenScaleRef = useRef(null)
   const { scene } = useGLTF(modelUrl)
+
+  // Fire onModelReady after the model has been rendered at least once. R3F
+  // calls useFrame BEFORE each renderer.render(), so by the 2nd useFrame the
+  // first (slow) compile-+-draw is behind us and the model is on screen.
+  // Latched via ref so we only signal once. setTimeout fallback covers the
+  // edge case where the render loop is paused before we hit 2 frames.
+  const readyFiredRef = useRef(false)
+  const frameCountRef = useRef(0)
+  useFrame(() => {
+    if (readyFiredRef.current || !onModelReady) return
+    frameCountRef.current += 1
+    if (frameCountRef.current >= 2) {
+      readyFiredRef.current = true
+      onModelReady()
+    }
+  })
+  useEffect(() => {
+    if (!onModelReady) return
+    const t = setTimeout(() => {
+      if (!readyFiredRef.current) {
+        readyFiredRef.current = true
+        onModelReady()
+      }
+    }, 3000)
+    return () => clearTimeout(t)
+  }, [onModelReady])
   const camera = useThree((s) => s.camera)
   const gl = useThree((s) => s.gl)
   const raycaster = useThree((s) => s.raycaster)
