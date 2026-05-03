@@ -1,0 +1,543 @@
+:root {
+  /* Slight phosphor tint instead of pure black — reads as "the screen is
+     actually on" rather than off. The shader also pushes green at low lum. */
+  --bg: #07130a;
+  --room-bg: #171c19;
+  --terminal-green: #15ff00;
+  --terminal-dim: #0a6600;
+  --terminal-mid: #0f9900;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--room-bg);
+  color: var(--terminal-green);
+  font-family: 'Space Mono', monospace;
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+/* Inside the iframe (?embed=1), keep the deep terminal black, not the room lift. */
+.embed-page {
+  background-color: var(--bg);
+}
+
+::selection {
+  background-color: var(--terminal-green);
+  color: #000;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ---------- Layout ---------- */
+
+.page {
+  padding: clamp(0.875rem, 3.5vw, 4rem);
+  min-height: 100svh;
+  position: relative;
+}
+
+.page__inner {
+  width: 100%;
+  max-width: 56rem;
+  margin: 0 auto;
+}
+
+/* ---------- CRT effects ---------- */
+/* Scoped to the off-screen source container so they render onto the screen
+   texture, not over the whole 3D page. */
+
+.crt-scanline {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background:
+    linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.45) 50%),
+    linear-gradient(
+      90deg,
+      rgba(255, 0, 0, 0.08),
+      rgba(0, 255, 0, 0.03),
+      rgba(0, 0, 255, 0.08)
+    );
+  background-size: 100% 3px, 3px 100%;
+  pointer-events: none;
+  z-index: 100;
+  animation: scanline-shift 0.18s steps(2) infinite, screen-flicker 7s ease-in-out infinite;
+}
+
+/* Slow rolling shutter band — drifts down the screen */
+.crt-scanline::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(255, 255, 255, 0.045) 48%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.045) 52%,
+    transparent 100%
+  );
+  background-size: 100% 35vh;
+  background-repeat: no-repeat;
+  animation: roll-band 6s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes scanline-shift {
+  0% { background-position: 0 0, 0 0; }
+  100% { background-position: 0 1px, 0 0; }
+}
+
+@keyframes screen-flicker {
+  0%, 100% { opacity: 1; }
+  47% { opacity: 1; }
+  48% { opacity: 0.92; }
+  49% { opacity: 1; }
+  72% { opacity: 1; }
+  73% { opacity: 0.95; }
+  74% { opacity: 1; }
+}
+
+@keyframes roll-band {
+  0% { background-position: 0 -40vh; }
+  100% { background-position: 0 110vh; }
+}
+
+.noise {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0.09;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
+
+/* ---------- 3D stage + iframe-embedded terminal page ---------- */
+
+/* Off-screen DOM source captured by html-to-image and rendered as a CRT
+   shader on the screen mesh. Must stay laid-out (no display:none /
+   visibility:hidden — those skip foreignObject capture). */
+/* The off-screen DOM source must stay in the layout tree AND on-screen so the
+   browser actually loads the fonts inside it (browsers skip font load for
+   subtrees positioned off-page). We cover it with .source-mask below so the
+   user never sees it. html-to-image still captures the live source element. */
+.html-source {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1024px;
+  height: 768px;
+  pointer-events: none;
+  background: var(--bg);
+  overflow: hidden;
+  z-index: 0;
+}
+
+.source-mask {
+  position: fixed;
+  inset: 0;
+  background: var(--room-bg);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.html-source__page {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  /* The CRT screen mesh's UV crops the top/bottom ~10.5% (~80px on a 768px
+     source) behind the bezel. Padding starts content at the visible edge;
+     compact overrides below shrink internal content to fit within the
+     visible 608px strip without overflowing. */
+  padding: 7rem 4rem 4rem;
+  background: var(--bg);
+}
+
+/* Use system monospace inside the captured-source DOM ONLY. html-to-image's
+   SVG foreignObject can't reliably embed Space Mono (font URLs don't load
+   inside the SVG render context, even via fontEmbedCSS), so the texture has
+   been rendering in system mono regardless. By matching the source DOM's
+   font to what the texture actually uses, the DOM rects line up with the
+   text positions in the texture and the click-bridge is accurate. */
+.html-source,
+.html-source * {
+  font-family: 'Menlo', 'Consolas', 'Liberation Mono', 'DejaVu Sans Mono', monospace !important;
+}
+
+/* Compact spacing for the captured-source-only DOM. Targets the inner content
+   to fit within the visible curved-screen strip with breathing room above/
+   below the footer. */
+.html-source .system-header {
+  margin-bottom: 1.5rem;
+}
+.html-source .terminal {
+  padding: 1.75rem;
+}
+.html-source .terminal-stack {
+  gap: 1rem;
+}
+.html-source .heading-name {
+  font-size: 2rem;
+}
+.html-source .heading-role {
+  font-size: 1.625rem;
+}
+.html-source .bio {
+  font-size: 1rem;
+  line-height: 1.55;
+  margin-top: 1.25rem;
+}
+.html-source .bio__meta {
+  margin-top: 0.75rem;
+  /* Brighten the LOCATION / FOCUS values for legibility through the CRT
+     shader (chromatic aberration + scanlines + vignette darken everything). */
+  color: var(--terminal-green);
+}
+.html-source .bio__meta .bio__label {
+  /* Override the global dim-green for labels — too dim through the shader. */
+  color: var(--terminal-mid);
+}
+.html-source .prompt {
+  margin-top: 0.75rem;
+}
+.html-source .site-footer {
+  margin-top: 1.75rem;
+}
+
+/* The shader's vignette + chromatic aberration crushes anything in
+   --terminal-dim until it's invisible. Bump dim secondary text up to
+   --terminal-mid so it stays legible on the CRT. */
+.html-source .system-tag,
+.html-source .prompt__shell,
+.html-source .status-line {
+  color: var(--terminal-mid);
+}
+
+/* Used inside the standalone /?embed=1 view. Same look, no shader. */
+.embed-page {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  padding: 3rem;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.three-stage {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 3;
+}
+
+.phosphor-glow {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background:
+    /* tight green halo right behind the screen */
+    radial-gradient(
+      ellipse 55vmax 40vmax at 50% 48%,
+      rgba(21, 255, 0, 0.22),
+      rgba(21, 255, 0, 0.07) 35%,
+      transparent 70%
+    ),
+    /* broader cool room ambient */
+    radial-gradient(
+      ellipse 110vmax 85vmax at 50% 55%,
+      rgba(70, 100, 130, 0.22),
+      rgba(70, 100, 130, 0.08) 45%,
+      transparent 80%
+    ),
+    /* subtle warm bounce from the floor */
+    radial-gradient(
+      ellipse 80vmax 30vmax at 50% 100%,
+      rgba(180, 130, 90, 0.18),
+      transparent 70%
+    ),
+    /* darken the "ceiling" area for atmospheric depth */
+    linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.45),
+      rgba(0, 0, 0, 0.12) 35%,
+      transparent 60%
+    ),
+    /* darken the floor edges (sides) — vignettes the room horizontally */
+    radial-gradient(
+      ellipse 80vmax 100vmax at 50% 100%,
+      transparent 30%,
+      rgba(0, 0, 0, 0.35) 80%
+    );
+}
+
+.mode-chip {
+  position: fixed;
+  bottom: 1rem;
+  left: 1rem;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--terminal-dim);
+  z-index: 4;
+  pointer-events: none;
+  font-family: 'Space Mono', monospace;
+}
+
+/* ---------- Header ---------- */
+
+.system-header {
+  margin-bottom: clamp(1.75rem, 5vw, 3rem);
+  opacity: 0.8;
+}
+
+.system-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--terminal-dim);
+}
+
+/* ---------- Terminal box ---------- */
+
+.terminal {
+  border: 1px solid var(--terminal-dim);
+  padding: clamp(1.125rem, 4vw, 2.5rem);
+  position: relative;
+  background: var(--bg);
+}
+
+.terminal-stack {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(1rem, 2.5vw, 1.5rem);
+}
+
+/* ---------- Typewriter ---------- */
+
+.typewriter-clip {
+  overflow: hidden;
+  /* Reserve a fraction of a line to prevent descender clipping mid-animation */
+  padding-bottom: 0.05em;
+}
+
+.typewriter {
+  overflow: hidden;
+  white-space: nowrap;
+  width: 0;
+  animation: typing 1.5s steps(40, end) forwards;
+}
+
+@keyframes typing {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+.delay-1 {
+  animation-delay: 0.1s;
+}
+.delay-2 {
+  animation-delay: 1.6s;
+}
+.delay-3 {
+  animation-delay: 3.2s;
+}
+.delay-4 {
+  animation-delay: 4.8s;
+}
+
+.heading-name {
+  font-size: clamp(1.25rem, 5.6vw, 2.25rem);
+  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin: 0;
+}
+
+.heading-role {
+  font-size: clamp(1.05rem, 4.6vw, 1.875rem);
+  line-height: 1.2;
+  color: var(--terminal-mid);
+  margin: 0;
+}
+
+/* ---------- Bio ---------- */
+
+.bio {
+  margin-top: clamp(1.25rem, 3.5vw, 2rem);
+  font-size: clamp(0.875rem, 2.2vw, 1.125rem);
+  color: var(--terminal-mid);
+  line-height: 1.7;
+  max-width: 42rem;
+}
+
+.bio__init {
+  margin-bottom: 0.5rem;
+}
+
+.bio__body {
+  color: #fff;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Slightly off-white inside the captured source — pure white sits at the
+   extreme of the chromatic-aberration sample, exaggerating RGB fringing on
+   the CRT shader. A near-white reads cleaner. */
+.html-source .bio__body {
+  color: #e6f5e6;
+}
+
+.bio__meta {
+  margin-top: 1rem;
+}
+
+.bio__label {
+  color: var(--terminal-dim);
+}
+
+.bio__link {
+  text-decoration: underline;
+  text-decoration-color: var(--terminal-mid);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 5px;
+  transition: background-color 0.05s ease, color 0.05s ease;
+  padding: 0 2px;
+}
+
+.bio__link:hover,
+.bio__link:active,
+.bio__link[data-fake-hover] {
+  background-color: var(--terminal-green);
+  color: var(--bg);
+  text-decoration-color: var(--bg);
+}
+
+/* ---------- Prompt + cursor ---------- */
+
+.prompt {
+  margin-top: 1rem;
+  display: flex;
+  align-items: center;
+}
+
+.prompt__shell {
+  color: var(--terminal-dim);
+}
+
+.cursor {
+  display: inline-block;
+  width: 10px;
+  height: 18px;
+  background-color: var(--terminal-green);
+  animation: blink 1s step-end infinite;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ---------- Footer ---------- */
+
+.site-footer {
+  margin-top: clamp(1.75rem, 5vw, 3rem);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+@media (min-width: 640px) {
+  .site-footer {
+    flex-direction: row;
+    align-items: center;
+    gap: 2rem;
+  }
+}
+
+.status-line {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--terminal-dim);
+}
+
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-left: -0.5rem; /* visually align tap-target padding with the column edge */
+}
+
+@media (min-width: 640px) {
+  .nav {
+    gap: 1.5rem;
+    margin-left: 0;
+  }
+}
+
+.nav__link {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  padding: 0.625rem 0.75rem;
+  transition: background-color 0.05s ease, color 0.05s ease;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px; /* WCAG touch target */
+}
+
+@media (min-width: 640px) {
+  .nav__link {
+    padding: 0.25rem 0.5rem;
+    min-height: 0;
+  }
+}
+
+.nav__link:hover,
+.nav__link:active,
+.nav__link[data-fake-hover] {
+  background-color: var(--terminal-green);
+  color: var(--bg);
+}
