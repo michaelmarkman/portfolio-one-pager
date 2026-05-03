@@ -1,7 +1,8 @@
 import { Suspense, useEffect, useRef } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { ContactShadows, OrbitControls } from '@react-three/drei'
+import { ContactShadows, Environment, Grid, OrbitControls } from '@react-three/drei'
 import { Leva, useControls, folder } from 'leva'
+import * as THREE from 'three'
 import CrtModel from './CrtModel.jsx'
 import DustField from './DustField.jsx'
 import WindowBlindsLight from './WindowBlindsLight.jsx'
@@ -189,20 +190,160 @@ function OrbitResetController({ orbitLimits }) {
   return null
 }
 
-function CrtScreen({ sourceRef }) {
+/**
+ * Dampened mouse pan — translates camera AND orbit target in lock-step
+ * along the camera-relative right/up axes. The look direction stays
+ * constant so it reads as a smooth parallax pan rather than a head-turn.
+ * Each frame we strip the previous offset off both camera + target,
+ * compute a new desired offset from mouse, lerp toward it, then re-apply.
+ * OrbitControls keeps full freedom; the user can still drag to orbit and
+ * the pan rides on top.
+ */
+function MouseParallax({ strength = 0.08, lerpAmt = 0.025 }) {
+  const controls = useThree((s) => s.controls)
+  const camera = useThree((s) => s.camera)
+  const mouse = useThree((s) => s.mouse)
+  const prev = useRef(new THREE.Vector3())
+  const tmpDir = useRef(new THREE.Vector3())
+  const tmpRight = useRef(new THREE.Vector3())
+  const tmpUp = useRef(new THREE.Vector3())
+  const tmpTarget = useRef(new THREE.Vector3())
+
+  useFrame(() => {
+    if (!controls?.target) return
+    // Recover the orbit-driven base position by subtracting last frame's
+    // parallax offset from BOTH camera and target.
+    controls.target.sub(prev.current)
+    camera.position.sub(prev.current)
+    // Camera-relative right + up axes (world space).
+    camera.getWorldDirection(tmpDir.current)
+    tmpRight.current.crossVectors(tmpDir.current, camera.up).normalize()
+    tmpUp.current.crossVectors(tmpRight.current, tmpDir.current).normalize()
+    // Desired pan offset in world space. Negative so the camera drifts
+    // OPPOSITE the cursor — mouse-right shifts the camera left, which makes
+    // the model appear to move with the cursor (counter-parallax / follow).
+    tmpTarget.current
+      .copy(tmpRight.current)
+      .multiplyScalar(-mouse.x * strength)
+      .addScaledVector(tmpUp.current, -mouse.y * strength)
+    // Smooth-ease (this IS the damping — small lerpAmt = slower follow).
+    prev.current.lerp(tmpTarget.current, lerpAmt)
+    // Re-apply offset to both — pan, not look-around.
+    controls.target.add(prev.current)
+    camera.position.add(prev.current)
+    controls.update()
+  })
+  return null
+}
+
+/**
+ * Pushes live FOV updates onto the perspective camera. Canvas's `camera`
+ * prop only seeds initial values; later prop changes are ignored, so we
+ * sync explicitly from a leva slider.
+ */
+function CameraFovSync({ fov }) {
+  const camera = useThree((s) => s.camera)
+  useEffect(() => {
+    if (camera.fov === fov) return
+    camera.fov = fov
+    camera.updateProjectionMatrix()
+  }, [camera, fov])
+  return null
+}
+
+/**
+ * Reads the live camera + OrbitControls state on every change and pushes
+ * it back to the parent via onChange. Used by the lab page to power an
+ * on-screen debug HUD so we can capture exact framing values from a
+ * screenshot.
+ */
+function CameraSpy({ onChange }) {
+  const camera = useThree((s) => s.camera)
+  const controls = useThree((s) => s.controls)
+  useEffect(() => {
+    if (!controls || !onChange) return
+    const push = () => {
+      const az = controls.getAzimuthalAngle?.() ?? 0
+      const polar = controls.getPolarAngle?.() ?? 0
+      onChange({
+        pos: [camera.position.x, camera.position.y, camera.position.z],
+        target: [controls.target.x, controls.target.y, controls.target.z],
+        fov: camera.fov,
+        distance: camera.position.distanceTo(controls.target),
+        azimuth: az,
+        polar: polar,
+        azimuthDeg: (az * 180) / Math.PI,
+        polarDeg: (polar * 180) / Math.PI,
+      })
+    }
+    push()
+    controls.addEventListener('change', push)
+    return () => controls.removeEventListener('change', push)
+  }, [camera, controls, onChange])
+  return null
+}
+
+function CrtScreen({ sourceRef, modelUrl, debugMeshes, modelTransform, screenForward, remapScreenUV, screenUVRotation, screenUVFlipX, screenUVFlipY, hideMeshes, useHitUv, enableGlassMesh, enableBackOccluder, glassOverride, glassMode }) {
   const { texture } = useHtmlCanvasTexture(sourceRef)
   return (
     <CrtModel
       texture={texture}
       sourceRef={sourceRef}
       shader={SHADER}
-      glass={GLASS}
-      screenForward={GLASS.forwardOffset}
+      glass={glassOverride ?? GLASS}
+      screenForward={screenForward ?? GLASS.forwardOffset}
+      modelUrl={modelUrl}
+      debugMeshes={debugMeshes}
+      modelTransform={modelTransform}
+      remapScreenUV={remapScreenUV}
+      screenUVRotation={screenUVRotation}
+      screenUVFlipX={screenUVFlipX}
+      screenUVFlipY={screenUVFlipY}
+      hideMeshes={hideMeshes}
+      useHitUv={useHitUv}
+      enableGlassMesh={enableGlassMesh}
+      enableBackOccluder={enableBackOccluder}
+      glassMode={glassMode}
     />
   )
 }
 
-export default function CrtScene({ sourceRef }) {
+export default function CrtScene({
+  sourceRef,
+  modelUrl,
+  debugMeshes,
+  freeOrbit = false,
+  modelTransform,
+  screenForward,
+  remapScreenUV,
+  screenUVRotation,
+  screenUVFlipX,
+  screenUVFlipY,
+  hideMeshes,
+  useHitUv,
+  enableGlassMesh,
+  enableBackOccluder,
+  glassOverride,
+  glassMode = 'phong',
+  envPreset = 'studio',
+  envIntensity = 1,
+  envRotationY = 0,
+  envBlur = 0,
+  labBackground = false,
+  showLeva = false,
+  mouseParallax = 0,
+  cameraOverride,
+  onCameraChange,
+}) {
+  const cam = {
+    posX: cameraOverride?.position?.[0] ?? CAMERA.posX,
+    posY: cameraOverride?.position?.[1] ?? CAMERA.posY,
+    posZ: cameraOverride?.position?.[2] ?? CAMERA.posZ,
+    fov: cameraOverride?.fov ?? CAMERA.fov,
+    targetX: cameraOverride?.target?.[0] ?? CAMERA.targetX,
+    targetY: cameraOverride?.target?.[1] ?? CAMERA.targetY,
+    targetZ: cameraOverride?.target?.[2] ?? CAMERA.targetZ,
+  }
   const lights = useControls('Lights', {
     ambient: { value: LIGHTS.ambient, min: 0, max: 4, step: 0.05 },
     key: folder({
@@ -247,7 +388,7 @@ export default function CrtScene({ sourceRef }) {
 
   return (
     <>
-      <Leva hidden titleBar={{ title: 'Lights' }} />
+      <Leva hidden={!showLeva} titleBar={{ title: 'Tune' }} collapsed={false} />
       <div className="source-mask" aria-hidden="true" />
       <div className="phosphor-glow" aria-hidden="true" />
       <div className="three-stage">
@@ -255,12 +396,23 @@ export default function CrtScene({ sourceRef }) {
           dpr={[1, 3]}
           gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
           camera={{
-            position: [CAMERA.posX, CAMERA.posY, CAMERA.posZ],
-            fov: CAMERA.fov,
+            position: [cam.posX, cam.posY, cam.posZ],
+            fov: cam.fov,
             near: 0.1,
             far: 100,
           }}
         >
+          {glassMode === 'physical' && (
+            <Suspense fallback={null}>
+              <Environment
+                preset={envPreset}
+                background={false}
+                environmentIntensity={envIntensity}
+                environmentRotation={[0, envRotationY, 0]}
+                blur={envBlur}
+              />
+            </Suspense>
+          )}
           <ambientLight intensity={lights.ambient} />
           <FlickerDirectionalLight
             position={[lights.keyPosX, lights.keyPosY, lights.keyPosZ]}
@@ -298,66 +450,141 @@ export default function CrtScene({ sourceRef }) {
             dip={0.4}
           />
 
-          {/* Exponential fog matched to room-bg so the floor's far edge
-              fades into the background without a visible seam. */}
-          <fogExp2 attach="fog" args={['#171c19', 0.085]} />
+          {/* Atmospheric fog. Lab uses a deeper green tint with denser fog
+              for the phosphor/synthwave atmosphere. */}
+          {labBackground ? (
+            <fogExp2 attach="fog" args={['#02160c', 0.115]} />
+          ) : (
+            <fogExp2 attach="fog" args={['#171c19', 0.085]} />
+          )}
 
-          {/* Physical floor — large dark plane the TV sits on. */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
-            <planeGeometry args={[120, 120]} />
-            <meshStandardMaterial color="#181d1a" roughness={0.92} metalness={0.05} />
-          </mesh>
+          {labBackground ? (
+            // Lab: phosphor-green perspective grid receding into fog.
+            <Grid
+              position={[0, 0.001, 0]}
+              args={[40, 40]}
+              cellSize={0.5}
+              cellColor="#0d3a23"
+              cellThickness={0.6}
+              sectionSize={2.5}
+              sectionColor="#3fff8a"
+              sectionThickness={1.4}
+              fadeDistance={22}
+              fadeStrength={1.4}
+              infiniteGrid
+              followCamera={false}
+            />
+          ) : (
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
+              <planeGeometry args={[120, 120]} />
+              <meshStandardMaterial color="#181d1a" roughness={0.92} metalness={0.05} />
+            </mesh>
+          )}
 
           {/* Soft contact shadow under the TV — grounds the model. */}
           <ContactShadows
-            position={[0, 0.01, 1]}
+            position={[0, 0.01, labBackground ? 0 : 1]}
             scale={6}
             blur={2.6}
             far={2}
-            opacity={0.55}
+            opacity={labBackground ? 0.7 : 0.55}
             resolution={512}
             color="#000000"
           />
 
-          {/* Spotlight pool on the floor — pulls the eye to the TV. */}
-          <spotLight
-            position={[0, 6, 1]}
-            target-position={[0, 0, 1]}
-            intensity={lights.spotIntensity}
-            angle={lights.spotAngle}
-            penumbra={lights.spotPenumbra}
-            color="#ffe6c0"
-            distance={10}
-            decay={1.5}
-          />
+          {/* Lab atmospherics: a big phosphor-green halo behind the model
+              + a warm rim from the side for a hint of color separation +
+              the dust motes from production for that volumetric grit. */}
+          {labBackground && (
+            <>
+              <pointLight
+                position={[0, 2.0, -2.0]}
+                color="#3fff8a"
+                intensity={5.5}
+                distance={18}
+                decay={1.5}
+              />
+              <pointLight
+                position={[3.5, 1.8, -1.0]}
+                color="#5cffd0"
+                intensity={1.6}
+                distance={10}
+                decay={1.8}
+              />
+              <pointLight
+                position={[-3.5, 0.8, 1.0]}
+                color="#1a8a4a"
+                intensity={1.2}
+                distance={8}
+                decay={1.8}
+              />
+              <DustField />
+            </>
+          )}
 
-          {/* Window-blind stripes cast on the floor at an angle. */}
-          <WindowBlindsLight />
-
-          {/* Floating dust motes in the volume. */}
-          <DustField />
+          {/* Production-only warm spotlight + window blinds + dust. */}
+          {!labBackground && (
+            <>
+              <spotLight
+                position={[0, 6, 1]}
+                target-position={[0, 0, 1]}
+                intensity={lights.spotIntensity}
+                angle={lights.spotAngle}
+                penumbra={lights.spotPenumbra}
+                color="#ffe6c0"
+                distance={10}
+                decay={1.5}
+              />
+              <WindowBlindsLight />
+              <DustField />
+            </>
+          )}
 
           <Suspense fallback={null}>
-            <IdleSway>
-              <CrtScreen sourceRef={sourceRef} />
-            </IdleSway>
+            {freeOrbit ? (
+              <CrtScreen sourceRef={sourceRef} modelUrl={modelUrl} debugMeshes={debugMeshes} modelTransform={modelTransform} screenForward={screenForward} remapScreenUV={remapScreenUV} screenUVRotation={screenUVRotation} screenUVFlipX={screenUVFlipX} screenUVFlipY={screenUVFlipY} hideMeshes={hideMeshes} useHitUv={useHitUv} enableGlassMesh={enableGlassMesh} enableBackOccluder={enableBackOccluder} glassOverride={glassOverride} glassMode={glassMode} />
+            ) : (
+              <IdleSway>
+                <CrtScreen sourceRef={sourceRef} modelUrl={modelUrl} debugMeshes={debugMeshes} modelTransform={modelTransform} screenForward={screenForward} remapScreenUV={remapScreenUV} screenUVRotation={screenUVRotation} screenUVFlipX={screenUVFlipX} screenUVFlipY={screenUVFlipY} hideMeshes={hideMeshes} useHitUv={useHitUv} enableGlassMesh={enableGlassMesh} enableBackOccluder={enableBackOccluder} glassOverride={glassOverride} glassMode={glassMode} />
+              </IdleSway>
+            )}
           </Suspense>
 
-          <OrbitControls
-            makeDefault
-            enableZoom={false}
-            enablePan={false}
-            enableDamping
-            dampingFactor={0.08}
-            target={[CAMERA.targetX, CAMERA.targetY, CAMERA.targetZ]}
-            // Tight orbit cage: ~±10° horizontal, ~±8° vertical from the
-            // default angle. Default azimuth is ~-6° (camera at -0.4, 4.7).
-            minAzimuthAngle={ORBIT_LIMITS.minAz}
-            maxAzimuthAngle={ORBIT_LIMITS.maxAz}
-            minPolarAngle={ORBIT_LIMITS.minPolar}
-            maxPolarAngle={ORBIT_LIMITS.maxPolar}
-          />
-          <OrbitResetController orbitLimits={ORBIT_LIMITS} />
+          {freeOrbit ? (
+            <OrbitControls
+              makeDefault
+              enableZoom
+              enablePan
+              enableDamping
+              // Lower zoomSpeed + heavier damping = silky-smooth wheel zoom.
+              dampingFactor={0.12}
+              zoomSpeed={0.4}
+              rotateSpeed={0.7}
+              panSpeed={0.6}
+              target={[cam.targetX, cam.targetY, cam.targetZ]}
+            />
+          ) : (
+            <>
+              <OrbitControls
+                makeDefault
+                enableZoom={false}
+                enablePan={false}
+                enableDamping
+                dampingFactor={0.08}
+                target={[CAMERA.targetX, CAMERA.targetY, CAMERA.targetZ]}
+                // Tight orbit cage: ~±10° horizontal, ~±8° vertical from the
+                // default angle. Default azimuth is ~-6° (camera at -0.4, 4.7).
+                minAzimuthAngle={ORBIT_LIMITS.minAz}
+                maxAzimuthAngle={ORBIT_LIMITS.maxAz}
+                minPolarAngle={ORBIT_LIMITS.minPolar}
+                maxPolarAngle={ORBIT_LIMITS.maxPolar}
+              />
+              <OrbitResetController orbitLimits={ORBIT_LIMITS} />
+            </>
+          )}
+          {onCameraChange && <CameraSpy onChange={onCameraChange} />}
+          {cameraOverride?.fov != null && <CameraFovSync fov={cameraOverride.fov} />}
+          {mouseParallax > 0 && <MouseParallax strength={mouseParallax} />}
         </Canvas>
       </div>
     </>

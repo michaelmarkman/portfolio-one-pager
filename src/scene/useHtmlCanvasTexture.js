@@ -92,6 +92,7 @@ export function useHtmlCanvasTexture(sourceRef) {
       document.fonts.load('italic 400 1rem "Space Mono"'),
     ]).catch(() => {})
 
+    let captureCount = 0
     const tick = async (now) => {
       if (cancelled) return
       if (!inFlight && now - lastAt >= CAPTURE_INTERVAL_MS) {
@@ -110,6 +111,11 @@ export function useHtmlCanvasTexture(sourceRef) {
             ctx.clearRect(0, 0, SOURCE_W, SOURCE_H)
             ctx.drawImage(captured, 0, 0, SOURCE_W, SOURCE_H)
             texture.needsUpdate = true
+            captureCount++
+            if (captureCount <= 3) {
+              // eslint-disable-next-line no-console
+              console.log('[useHtmlCanvasTexture] capture', captureCount, 'el=', el?.tagName, el?.className, 'capturedSize=', captured.width, 'x', captured.height)
+            }
           }
         } catch (err) {
           // eslint-disable-next-line no-console

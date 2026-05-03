@@ -11,10 +11,20 @@ import SiteFooter from '../components/SiteFooter.jsx'
  * The CRT effects (scanlines, noise, glare, vignette, distortion) are NOT
  * rendered here — they're added per-pixel in the shader on the 3D mesh.
  */
-const HtmlSource = forwardRef(function HtmlSource({ profile, footerLinks, status }, ref) {
+const HtmlSource = forwardRef(function HtmlSource(
+  { profile, footerLinks, status, variant, pagePadTop, contentScale },
+  ref,
+) {
+  const rootClass = variant ? `html-source html-source--${variant}` : 'html-source'
+  // Optional inline override so leva can move the content up/down on the
+  // captured texture without touching CSS.
+  const pageStyle = pagePadTop != null ? { paddingTop: `${pagePadTop}rem` } : undefined
+  // Override the lab variant's --lab-scale variable from the slider.
+  const rootStyle =
+    contentScale != null ? { '--lab-scale': contentScale } : undefined
   return (
-    <div ref={ref} className="html-source" aria-hidden="true">
-      <div className="html-source__page">
+    <div ref={ref} className={rootClass} aria-hidden="true" style={rootStyle}>
+      <div className="html-source__page" style={pageStyle}>
         <SystemHeader />
         <Terminal {...profile} />
         <SiteFooter status={status} links={footerLinks} />

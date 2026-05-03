@@ -240,6 +240,37 @@ a {
   color: var(--terminal-mid);
 }
 
+/* Lab variant: bigger text so it reads cleanly through the Apple II's CRT
+   shader at a closer camera. The --lab-scale variable can be set inline by
+   the leva slider; it multiplies every typography size below. Placed AFTER
+   the production rules so cascade order beats them at equal specificity. */
+.html-source--lab {
+  --lab-scale: 1.4;
+}
+.html-source--lab .heading-name {
+  font-size: calc(2rem * var(--lab-scale));
+}
+.html-source--lab .heading-role {
+  font-size: calc(1.625rem * var(--lab-scale));
+}
+.html-source--lab .bio {
+  font-size: calc(1rem * var(--lab-scale));
+}
+.html-source--lab .prompt {
+  font-size: calc(1rem * var(--lab-scale));
+}
+.html-source--lab .site-footer,
+.html-source--lab .system-tag,
+.html-source--lab .status-line {
+  font-size: calc(0.875rem * var(--lab-scale));
+}
+/* Footer nav links use a hard-coded 10px globally — explicitly scale them
+   here too so the TWITTER / LINKEDIN / EMAIL labels grow with the rest. */
+.html-source--lab .nav__link {
+  font-size: calc(0.875rem * var(--lab-scale));
+  letter-spacing: 0.18em;
+}
+
 /* Used inside the standalone /?embed=1 view. Same look, no shader. */
 .embed-page {
   position: relative;
