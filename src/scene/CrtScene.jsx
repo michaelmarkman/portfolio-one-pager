@@ -321,11 +321,19 @@ function CameraSpy({ onChange }) {
  * by CrtModel after its first render frame), NOT on useProgress.active —
  * the loader queue can flip idle while Three.js is still compiling shaders
  * and a second asset (the lobby HDR) can kick a new load mid-gap, both of
- * which would otherwise cause the overlay to flicker. We still read
- * progress for the % display.
+ * which would otherwise cause the overlay to flicker.
+ *
+ * The % counter tracks the highest progress value we've ever seen, so it
+ * only climbs — drei's raw progress drops mid-flight when a new asset
+ * joins the queue and the loaded/total ratio re-bases.
  */
 function LoadingOverlay({ modelReady }) {
   const { progress } = useProgress()
+  const [peak, setPeak] = useState(0)
+  useEffect(() => {
+    setPeak((prev) => (progress > prev ? progress : prev))
+  }, [progress])
+  const display = modelReady ? 100 : peak
   return (
     <div
       className="boot-overlay"
@@ -335,7 +343,7 @@ function LoadingOverlay({ modelReady }) {
       }}
     >
       <div>BOOTING…</div>
-      <div className="boot-progress">{Math.round(progress)}%</div>
+      <div className="boot-progress">{Math.round(display)}%</div>
     </div>
   )
 }
