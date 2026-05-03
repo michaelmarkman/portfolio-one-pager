@@ -6,9 +6,7 @@ import '@fontsource/space-mono/400-italic.css'
 import './index.css'
 import EmbeddedTerminal from './EmbeddedTerminal.jsx'
 
-// Lazy-load App so phones never download three.js / drei / leva.
-const App = lazy(() => import('./App.jsx'))
-// Lab page — only requested when the user navigates to /lab.
+// Lazy-load the 3D scene so phones never download three.js / drei / leva.
 const Lab = lazy(() => import('./Lab.jsx'))
 
 const isEmbed = new URLSearchParams(window.location.search).has('embed')
@@ -16,11 +14,10 @@ const isMobile =
   typeof window !== 'undefined' &&
   (window.matchMedia('(max-width: 768px)').matches ||
     /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent))
-const isLab = typeof window !== 'undefined' && window.location.pathname.startsWith('/lab')
 
-// Lab bypasses the mobile/embed flat-view so we can preview the 3D scene on
-// any device.
-const useFlatView = !isLab && (isEmbed || isMobile)
+// Mobile + ?embed users get the lightweight flat terminal; everyone else
+// gets the 3D scene.
+const useFlatView = isEmbed || isMobile
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -28,7 +25,7 @@ createRoot(document.getElementById('root')).render(
       <EmbeddedTerminal />
     ) : (
       <Suspense fallback={null}>
-        {isLab ? <Lab /> : <App />}
+        <Lab />
       </Suspense>
     )}
   </StrictMode>,

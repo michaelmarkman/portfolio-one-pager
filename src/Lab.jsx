@@ -153,15 +153,15 @@ export default function Lab() {
       <CrtScene
         sourceRef={sourceRef}
         modelUrl="/apple2-4k-compressed.glb"
-        debugMeshes
+        debugMeshes={import.meta.env.DEV}
         freeOrbit
-        showLeva
+        showLeva={import.meta.env.DEV}
         labBackground
         cameraOverride={{
           // Default zoomed in close on the screen face. Free orbit/zoom still
           // available via mouse.
-          position: [-0.93, 1.59, 3.54],
-          target: [-0.05, 1.25, 0.36],
+          position: [-0.82, 1.56, 3.17],
+          target: [-0.05, 1.26, 0.36],
           fov: t.fov,
         }}
         mouseParallax={t.mouseParallax}
@@ -217,7 +217,7 @@ export default function Lab() {
           [t.hideKeyboard, t.hideBody],
         )}
       />
-      {camDebug && (
+      {import.meta.env.DEV && camDebug && (
         <div
           style={{
             position: 'fixed',
