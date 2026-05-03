@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useRef } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { ContactShadows, Environment, Grid, OrbitControls } from '@react-three/drei'
+import { ContactShadows, Environment, Grid, OrbitControls, useProgress } from '@react-three/drei'
 import { Leva, useControls, folder } from 'leva'
 import * as THREE from 'three'
 import CrtModel from './CrtModel.jsx'
@@ -316,6 +316,29 @@ function CameraSpy({ onChange }) {
   return null
 }
 
+/**
+ * Full-viewport boot overlay shown while three.js assets are still loading
+ * (the 25MB GLB takes a beat to parse + upload textures even from cache).
+ * Subscribes to drei's useProgress (LoadingManager singleton — works in HTML
+ * context, doesn't need to be inside Canvas). Fades out via CSS once active
+ * goes false; pointer-events drop to none so it never blocks interaction.
+ */
+function LoadingOverlay() {
+  const { progress, active } = useProgress()
+  return (
+    <div
+      className="boot-overlay"
+      style={{
+        opacity: active ? 1 : 0,
+        pointerEvents: active ? 'auto' : 'none',
+      }}
+    >
+      <div>BOOTING…</div>
+      <div className="boot-progress">{Math.round(progress)}%</div>
+    </div>
+  )
+}
+
 function CrtScreen({ sourceRef, modelUrl, debugMeshes, modelTransform, screenForward, remapScreenUV, screenUVRotation, screenUVFlipX, screenUVFlipY, hideMeshes, useHitUv, enableGlassMesh, enableBackOccluder, glassOverride, glassMode }) {
   const { texture } = useHtmlCanvasTexture(sourceRef)
   return (
@@ -424,6 +447,7 @@ export default function CrtScene({
   return (
     <>
       <Leva hidden={!showLeva} titleBar={{ title: 'Tune' }} collapsed={false} />
+      <LoadingOverlay />
       <div className="source-mask" aria-hidden="true" />
       <div className="phosphor-glow" aria-hidden="true" />
       <div className="three-stage" style={canvasFilter ? { filter: canvasFilter } : undefined}>
