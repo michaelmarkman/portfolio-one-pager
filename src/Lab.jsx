@@ -179,18 +179,30 @@ export default function Lab() {
     }),
   }))
 
-  const toggleScene = () =>
-    setT({ sceneMode: t.sceneMode === 'cozy' ? 'lab' : 'cozy' })
+  // Each tap to day flips between the two amber looks (light-bg paper
+  // monitor and dark-bg amber CRT). Stays in state so the visual sticks
+  // through React renders. Manual leva picks override the alternation.
+  const [cozyPalette, setCozyPalette] = useState('amber-inverted')
+  const toggleScene = () => {
+    const next = t.sceneMode === 'cozy' ? 'lab' : 'cozy'
+    if (next === 'cozy') {
+      setCozyPalette((p) => (p === 'amber-inverted' ? 'amber' : 'amber-inverted'))
+    }
+    setT({ sceneMode: next })
+  }
+
+  // Resolve 'auto' to phosphor in lab and to the current cozyPalette in
+  // cozy. Manual options ('amber', 'amber-inverted', 'phosphor', 'mono')
+  // pass through unchanged.
+  const effectivePalette =
+    t.screenPalette === 'auto'
+      ? t.sceneMode === 'cozy' ? cozyPalette : 'phosphor'
+      : t.screenPalette
 
   // Whether the off-screen DOM should be inverted before capture (light bg,
-  // dark text). Decoupled from sceneMode so manual palettes can opt in.
-  // 'amber-inverted' always inverts; 'auto' inverts when in cozy mode.
-  const screenInvert =
-    t.screenPalette === 'amber-inverted'
-      ? true
-      : t.screenPalette === 'auto'
-        ? t.sceneMode === 'cozy'
-        : false
+  // dark text). Driven by the resolved palette so 'amber-inverted' always
+  // inverts, regardless of sceneMode.
+  const screenInvert = effectivePalette === 'amber-inverted'
 
   const canvasFilter = useMemo(() => {
     const presetKey =
@@ -224,7 +236,7 @@ export default function Lab() {
         showLeva={import.meta.env.DEV}
         labBackground={t.sceneMode === 'lab'}
         sceneMode={t.sceneMode}
-        screenPalette={t.screenPalette}
+        screenPalette={effectivePalette}
         cameraOverride={{
           // Default zoomed in close on the screen face. Free orbit/zoom still
           // available via mouse.
