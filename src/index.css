@@ -87,6 +87,23 @@ a {
   z-index: 100;
   animation: scanline-shift 0.18s steps(2) infinite, screen-flicker 7s ease-in-out infinite;
 }
+/* On mobile the embedded terminal text is small and the dense 3px
+   scanline grid was crushing legibility. Soften the dark bands and
+   space the lines further apart so the text reads cleanly while the
+   CRT character is still there. */
+@media (max-width: 768px) {
+  .crt-scanline {
+    background:
+      linear-gradient(rgba(18, 16, 16, 0) 60%, rgba(0, 0, 0, 0.18) 60%),
+      linear-gradient(
+        90deg,
+        rgba(255, 0, 0, 0.05),
+        rgba(0, 255, 0, 0.02),
+        rgba(0, 0, 255, 0.05)
+      );
+    background-size: 100% 5px, 5px 100%;
+  }
+}
 
 /* Slow rolling shutter band — drifts down the screen */
 .crt-scanline::after {
