@@ -3,6 +3,9 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { ContactShadows, Environment, Grid, OrbitControls, useProgress } from '@react-three/drei'
 import { Leva, useControls, folder } from 'leva'
 import * as THREE from 'three'
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
 import CrtModel from './CrtModel.jsx'
 import DustField from './DustField.jsx'
 import WindowBlindsLight from './WindowBlindsLight.jsx'
@@ -129,15 +132,23 @@ const BG_LAB = '#02160c'
 const BG_COZY = '#efddc4'
 const FOG_COZY = { color: BG_COZY, density: 0.08 }
 
+// Lerps a color toward white by `lift` (0–1). Used to brighten the
+// fog and background when the grain post-FX is on, since additive
+// noise clamps darks to 0 and slightly lowers the perceived mean.
+const WHITE = new THREE.Color('#ffffff')
+function liftedColor(hex, lift) {
+  return new THREE.Color(hex).lerp(WHITE, lift)
+}
+
 /**
  * Mutates scene.fog (color + density) each frame based on transitionTRef.
  * Renders nothing — the fogExp2 instance is JSX-attached to scene.fog
  * separately. This component just lerps its properties.
  */
-function FogTransition({ transitionTRef }) {
+function FogTransition({ transitionTRef, lift = 0 }) {
   const scene = useThree((s) => s.scene)
-  const labColor = useMemo(() => new THREE.Color(FOG_LAB.color), [])
-  const cozyColor = useMemo(() => new THREE.Color(FOG_COZY.color), [])
+  const labColor = useMemo(() => liftedColor(FOG_LAB.color, lift), [lift])
+  const cozyColor = useMemo(() => liftedColor(FOG_COZY.color, lift), [lift])
   const tmp = useMemo(() => new THREE.Color(), [])
   useFrame(() => {
     if (!scene.fog) return
@@ -263,11 +274,11 @@ function CrossfadeContactShadows({ transitionTRef }) {
  * background on unmount so production page (which never mounts this) keeps
  * its null/transparent default.
  */
-function BackgroundTransition({ transitionTRef }) {
+function BackgroundTransition({ transitionTRef, lift = 0 }) {
   const scene = useThree((s) => s.scene)
-  const labColor = useMemo(() => new THREE.Color(BG_LAB), [])
-  const cozyColor = useMemo(() => new THREE.Color(BG_COZY), [])
-  const sharedColor = useMemo(() => new THREE.Color(BG_LAB), [])
+  const labColor = useMemo(() => liftedColor(BG_LAB, lift), [lift])
+  const cozyColor = useMemo(() => liftedColor(BG_COZY, lift), [lift])
+  const sharedColor = useMemo(() => liftedColor(BG_LAB, lift), [lift])
   useEffect(() => {
     const prev = scene.background
     scene.background = sharedColor
@@ -755,6 +766,87 @@ function CameraSpy({ onChange }) {
 }
 
 /**
+ * Custom film-grain post-processing pass. Three's built-in FilmPass
+ * brightens the image (its shader does base + base*noise, multiplying
+ * brightness by 1.1–2.1 even at low intensity), which shifted the cozy
+ * cream and the lab green way off-color. This pass instead just adds
+ * zero-centered noise to the rendered pixels so darks and lights are
+ * equally likely — proper film grain that doesn't warm the palette.
+ */
+const GrainShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    intensity: { value: 0.15 },
+    time: { value: 0 },
+    grayscale: { value: false },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform float intensity;
+    uniform float time;
+    uniform bool grayscale;
+    varying vec2 vUv;
+    float hash(vec2 p) {
+      return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+    }
+    void main() {
+      vec4 base = texture2D(tDiffuse, vUv);
+      float n = hash(vUv + fract(time)) - 0.5;
+      vec3 color = base.rgb + vec3(n) * intensity;
+      if (grayscale) {
+        color = vec3(dot(color, vec3(0.299, 0.587, 0.114)));
+      }
+      gl_FragColor = vec4(color, base.a);
+    }
+  `,
+}
+
+function FilmGrainPostFX({ intensity = 0.15, grayscale = false }) {
+  const gl = useThree((s) => s.gl)
+  const scene = useThree((s) => s.scene)
+  const camera = useThree((s) => s.camera)
+  const size = useThree((s) => s.size)
+
+  const composer = useMemo(() => {
+    const c = new EffectComposer(gl)
+    c.addPass(new RenderPass(scene, camera))
+    return c
+  }, [gl, scene, camera])
+
+  const grainPass = useMemo(() => new ShaderPass(GrainShader), [])
+
+  useEffect(() => {
+    composer.addPass(grainPass)
+    return () => composer.removePass(grainPass)
+  }, [composer, grainPass])
+
+  useEffect(() => {
+    const dpr = gl.getPixelRatio()
+    composer.setPixelRatio(dpr)
+    composer.setSize(size.width, size.height)
+  }, [composer, gl, size.width, size.height])
+
+  useEffect(() => {
+    grainPass.uniforms.intensity.value = intensity
+    grainPass.uniforms.grayscale.value = grayscale
+  }, [grainPass, intensity, grayscale])
+
+  useFrame((state, delta) => {
+    grainPass.uniforms.time.value = state.clock.elapsedTime
+    composer.render(delta)
+  }, 1)
+
+  return null
+}
+
+/**
  * Full-viewport boot overlay. Visibility is latched on `modelReady` (set
  * by CrtModel after its first render frame), NOT on useProgress.active —
  * the loader queue can flip idle while Three.js is still compiling shaders
@@ -851,7 +943,15 @@ export default function CrtScene({
   pauseReturn = false,
   cameraOverride,
   onCameraChange,
+  filmGrain,
+  shakeIntensity,
 }) {
+  // Brighten BG + fog colors by lerping toward white, only when the
+  // grain post-FX is on. Additive noise from the grain shader clamps
+  // darks at 0 and shifts the perceived mean down, so we lift the
+  // backgrounds back up. Scaled with intensity so subtle grain only
+  // gets a subtle compensation.
+  const bgLift = filmGrain?.enabled ? Math.min(0.3, (filmGrain.intensity ?? 0.15) * 0.7) : 0
   const [modelReady, setModelReady] = useState(false)
   const handleModelReady = useCallback(() => setModelReady(true), [])
   // introActive covers JUST the hold phase. After hold, OrbitControls
@@ -1033,8 +1133,8 @@ export default function CrtScene({
           {transitionable ? (
             <>
               <fogExp2 attach="fog" args={[FOG_LAB.color, FOG_LAB.density]} />
-              <FogTransition transitionTRef={transitionTRef} />
-              <BackgroundTransition transitionTRef={transitionTRef} />
+              <FogTransition transitionTRef={transitionTRef} lift={bgLift} />
+              <BackgroundTransition transitionTRef={transitionTRef} lift={bgLift} />
             </>
           ) : (
             <fogExp2 attach="fog" args={['#171c19', 0.085]} />
@@ -1258,12 +1358,18 @@ export default function CrtScene({
           {onCameraChange && <CameraSpy onChange={onCameraChange} />}
           {cameraOverride?.fov != null && <CameraFovSync fov={cameraOverride.fov} />}
           {!introActive && mouseParallax > 0 && <MouseParallax strength={mouseParallax} />}
-          {!introActive && transitionable && <CameraShake sceneMode={sceneMode} />}
+          {!introActive && transitionable && <CameraShake sceneMode={sceneMode} intensity={shakeIntensity ?? 0.06} />}
           {!introActive && idleBob > 0 && <CameraIdleBob amplitude={idleBob} speed={idleBobSpeed} />}
           {tone?.mode && (
             <ToneMappingSync
               mode={TONE_MAP[tone.mode] ?? THREE.ACESFilmicToneMapping}
               exposure={tone.exposure ?? 1}
+            />
+          )}
+          {filmGrain?.enabled && (
+            <FilmGrainPostFX
+              intensity={filmGrain.intensity}
+              grayscale={filmGrain.grayscale}
             />
           )}
         </Canvas>

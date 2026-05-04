@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useControls, folder } from 'leva'
 import HtmlSource from './scene/HtmlSource.jsx'
 import CrtScene from './scene/CrtScene.jsx'
@@ -46,6 +46,7 @@ const FILTER_PRESETS = {
 export default function Lab() {
   const sourceRef = useRef(null)
   const [camDebug, setCamDebug] = useState(null)
+  const [shakeIntensity, setShakeIntensity] = useState(0.06)
 
   const [t, setT] = useControls('Model', () => ({
     scene: folder({
@@ -177,6 +178,15 @@ export default function Lab() {
       filterContrast: { value: 1, min: 0, max: 2, step: 0.01, label: 'contrast' },
       filterBrightness: { value: 1, min: 0, max: 2, step: 0.01, label: 'brightness' },
     }),
+    grain: folder({
+      // Custom additive-noise pass via EffectComposer + ShaderPass.
+      // Adds zero-centered noise so darks AND lights speckle equally —
+      // unlike Three's stock FilmPass which multiplies brightness.
+      // Covers everything the WebGL renderer draws.
+      grainEnabled: { value: false, label: 'enabled' },
+      grainIntensity: { value: 0.15, min: 0, max: 0.6, step: 0.005, label: 'intensity' },
+      grainGrayscale: { value: false, label: 'b&w' },
+    }),
   }))
 
   // Each tap to day flips between the two amber looks (light-bg paper
@@ -199,6 +209,49 @@ export default function Lab() {
       ? t.sceneMode === 'cozy' ? cozyPalette : 'phosphor'
       : t.screenPalette
 
+  // Auto-flip to day mode partway through the intro if it's daytime in
+  // the visitor's local timezone. Fires once on mount; bails if the user
+  // has already flipped manually before the timer hits.
+  const sceneModeRef = useRef(t.sceneMode)
+  useEffect(() => {
+    sceneModeRef.current = t.sceneMode
+  }, [t.sceneMode])
+  useEffect(() => {
+    const hour = new Date().getHours()
+    const isDaytime = hour >= 6 && hour < 18
+    if (!isDaytime) return
+    // Pre-flip hint: fake-hover the toggle for a second so the user sees
+    // the icon highlight before the scene flips on its own — pointing at
+    // the control they can use to switch back later.
+    const hoverOn = setTimeout(() => {
+      if (sceneModeRef.current !== 'lab') return
+      const btn = document.querySelector('.day-night-toggle')
+      if (btn) btn.setAttribute('data-fake-hover', '')
+    }, 10000)
+    const flip = setTimeout(() => {
+      const btn = document.querySelector('.day-night-toggle')
+      if (btn) btn.removeAttribute('data-fake-hover')
+      if (sceneModeRef.current !== 'lab') return
+      // Drop shake intensity for the auto-flip — it's a passive
+      // transition, so the bump should be a soft nudge rather than the
+      // punchy thump of a manual toggle. Restored after the shake's
+      // duration so subsequent manual clicks feel normal.
+      setShakeIntensity(0.018)
+      setCozyPalette((p) =>
+        p === 'amber-inverted' ? 'amber' : 'amber-inverted',
+      )
+      setT({ sceneMode: 'cozy' })
+      setTimeout(() => setShakeIntensity(0.06), 700)
+    }, 11000)
+    return () => {
+      clearTimeout(hoverOn)
+      clearTimeout(flip)
+      const btn = document.querySelector('.day-night-toggle')
+      if (btn) btn.removeAttribute('data-fake-hover')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Whether the off-screen DOM should be inverted before capture (light bg,
   // dark text). Driven by the resolved palette so 'amber-inverted' always
   // inverts, regardless of sceneMode.
@@ -213,6 +266,11 @@ export default function Lab() {
     const adj = `saturate(${t.filterSat}) hue-rotate(${t.filterHue}deg) contrast(${t.filterContrast}) brightness(${t.filterBrightness})`
     return [preset, adj].filter(Boolean).join(' ')
   }, [t.filterPreset, t.sceneMode, t.filterSat, t.filterHue, t.filterContrast, t.filterBrightness])
+
+  const filmGrain = useMemo(
+    () => ({ enabled: t.grainEnabled, intensity: t.grainIntensity, grayscale: t.grainGrayscale }),
+    [t.grainEnabled, t.grainIntensity, t.grainGrayscale],
+  )
 
   return (
     <>
@@ -236,6 +294,8 @@ export default function Lab() {
         showLeva={import.meta.env.DEV}
         labBackground={t.sceneMode === 'lab'}
         sceneMode={t.sceneMode}
+        filmGrain={filmGrain}
+        shakeIntensity={shakeIntensity}
         screenPalette={effectivePalette}
         cameraOverride={{
           // Default zoomed in close on the screen face. Free orbit/zoom still
