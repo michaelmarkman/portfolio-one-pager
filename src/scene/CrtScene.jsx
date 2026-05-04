@@ -63,13 +63,30 @@ const ORBIT_LIMITS = {
 // Polar is kept near horizontal so users can't tilt straight up/down.
 // Distance bounds the dolly so users can't scroll into the model or fly
 // off into the fog. Default cam sits at ~3.32 units from target.
+// Soft cage — where elastic resistance starts kicking in for azimuth
+// and the polar low end (looking down from above). The polar HIGH end
+// (looking up from below) is hard-clamped instead; we never want the
+// camera to dip under the floor where there's nothing to look at.
 const FREE_ORBIT_LIMITS = {
-  minAz: -Math.PI * 0.20,    // ~-36°
-  maxAz: Math.PI * 0.04,     // ~+7°
-  minPolar: Math.PI * 0.38,  // ~68°
-  maxPolar: Math.PI * 0.55,  // ~99°
-  minDistance: 1.0,
-  maxDistance: 4.0,
+  minAz: -Math.PI * 0.23,    // ~-41°
+  maxAz: Math.PI * 0.07,     // ~+13°
+  minPolar: Math.PI * 0.28,  // ~50°
+  maxPolar: Math.PI * 0.51,  // ~91.8° — soft (elastic begins)
+  minDistance: 0.7,
+  maxDistance: 7,
+}
+// Damping ramp + stiffness per axis. The polar high-end (under-floor
+// territory) uses a much higher stiffness so the asymptote drops to
+// near-zero throughput within a few degrees past soft — practically a
+// wall, but smooth on approach. Azimuth and polar low-end stay at the
+// gentler default so they feel elastic.
+const FREE_ORBIT_RAMP = {
+  azimuth: Math.PI * 0.16,        // ~29°
+  azimuthStiffness: 6,
+  polarLow: Math.PI * 0.10,       // ~18° (looking down from above)
+  polarLowStiffness: 6,
+  polarHigh: Math.PI * 0.04,      // ~7° (looking up from below)
+  polarHighStiffness: 18,         // steep — keeps camera above floor
 }
 
 // Where the camera starts on first load — full side profile of the PC,
@@ -397,6 +414,58 @@ function IdleSway({ children }) {
 }
 
 /**
+ * Smoothly resists orbit motion past the SOFT cage by scaling
+ * OrbitControls' rotateSpeed inward as the camera pushes past a soft
+ * azimuth/polar boundary. Letting OrbitControls do its own damping
+ * integration with the reduced speed keeps motion smooth — no per-
+ * frame angle correction fighting OrbitControls' internal state. The
+ * multiplier is asymptotic (`1 / (1 + 6 * t²)`) so resistance never
+ * fully blocks motion; it just gets exponentially harder the further
+ * past soft you push, with no plateau or wall. Zoom is intentionally
+ * left alone here — it sticks with OrbitControls' classic min/max
+ * clamp + the OrbitResetController's release spring.
+ */
+function ElasticOrbitLimits({ soft, ramp }) {
+  const controls = useThree((s) => s.controls)
+  const baseRotateRef = useRef(null)
+
+  useFrame(() => {
+    if (!controls?.getAzimuthalAngle) return
+    if (baseRotateRef.current == null) baseRotateRef.current = controls.rotateSpeed
+
+    const az = controls.getAzimuthalAngle()
+    const polar = controls.getPolarAngle()
+
+    const azOver = Math.max(
+      0,
+      soft.maxAz != null ? az - soft.maxAz : 0,
+      soft.minAz != null ? soft.minAz - az : 0,
+    )
+    const polarOverLow =
+      soft.minPolar != null ? Math.max(0, soft.minPolar - polar) : 0
+    const polarOverHigh =
+      soft.maxPolar != null ? Math.max(0, polar - soft.maxPolar) : 0
+
+    // Each axis contributes its own normalized stiffness term to the
+    // shared rotateSpeed multiplier. Whichever axis is most over-its-
+    // soft-limit dominates — so when polar is dipping toward the floor,
+    // its high stiffness chokes ALL rotation, which feels right (the
+    // user's drag stalls until they back off the dangerous direction).
+    const azFactor =
+      ramp.azimuthStiffness * (azOver / ramp.azimuth) ** 2
+    const polarLowFactor =
+      ramp.polarLowStiffness * (polarOverLow / ramp.polarLow) ** 2
+    const polarHighFactor =
+      ramp.polarHighStiffness * (polarOverHigh / ramp.polarHigh) ** 2
+    const factor = Math.max(azFactor, polarLowFactor, polarHighFactor)
+    const rotMul = 1 / (1 + factor)
+
+    controls.rotateSpeed = baseRotateRef.current * rotMul
+  })
+  return null
+}
+
+/**
  * After the user releases an orbit drag, springs the camera back to the
  * starting azimuth/polar. Underdamped so it overshoots and settles —
  * gives a "bounce" feel, especially when released at a cage limit.
@@ -431,10 +500,15 @@ function OrbitResetController({ orbitLimits, defaultCam, sceneMode }) {
 
   // Spring tuning — softer + more damped than a typical spring. Lower
   // stiffness means a slower return; higher damping ratio means it
-  // settles without bouncing past the default.
+  // settles without bouncing past the default. Distance gets its own
+  // stiffer constant so the longer travel back from maxDistance=7
+  // (~4 units from default) snaps as quickly as the rotation axes do
+  // over their tighter ranges.
   const STIFFNESS = 4
+  const DIST_STIFFNESS = 9
   const DAMPING_RATIO = 0.85 // 1 = critical, <1 bouncy, >1 sluggish
   const dampingCoef = 2 * Math.sqrt(STIFFNESS) * DAMPING_RATIO
+  const distDampingCoef = 2 * Math.sqrt(DIST_STIFFNESS) * DAMPING_RATIO
 
   // On release, kick velocity AWAY from the cage limit if user was sitting
   // at it — sells the "tug at the wall" rubber-band feel before springing
@@ -471,14 +545,41 @@ function OrbitResetController({ orbitLimits, defaultCam, sceneMode }) {
         const az = controls.getAzimuthalAngle()
         const polar = controls.getPolarAngle()
         const dist = camera.position.distanceTo(controls.target)
-        if (Math.abs(az - orbitLimits.minAz) < EDGE_EPS) azVelRef.current = REBOUND_KICK
-        else if (Math.abs(az - orbitLimits.maxAz) < EDGE_EPS) azVelRef.current = -REBOUND_KICK
-        if (Math.abs(polar - orbitLimits.minPolar) < EDGE_EPS) polarVelRef.current = REBOUND_KICK
-        else if (Math.abs(polar - orbitLimits.maxPolar) < EDGE_EPS) polarVelRef.current = -REBOUND_KICK
-        if (orbitLimits.minDistance != null && Math.abs(dist - orbitLimits.minDistance) < EDGE_EPS * 4) {
-          distVelRef.current = DIST_REBOUND_KICK
-        } else if (orbitLimits.maxDistance != null && Math.abs(dist - orbitLimits.maxDistance) < EDGE_EPS * 4) {
-          distVelRef.current = -DIST_REBOUND_KICK
+        // With the elastic damper there's no hard wall — the user can
+        // release anywhere, including well past the soft cage. Treat
+        // "past soft" the same as "at the wall" but scale the kick by
+        // overshoot so far-out releases get a snappier rebound.
+        const azOver =
+          az < orbitLimits.minAz - EDGE_EPS ? orbitLimits.minAz - az
+          : az > orbitLimits.maxAz + EDGE_EPS ? -(az - orbitLimits.maxAz)
+          : Math.abs(az - orbitLimits.minAz) < EDGE_EPS ? EDGE_EPS
+          : Math.abs(az - orbitLimits.maxAz) < EDGE_EPS ? -EDGE_EPS
+          : 0
+        if (azOver !== 0) {
+          azVelRef.current = Math.sign(azOver) * (REBOUND_KICK + Math.abs(azOver) * 4)
+        }
+        const polarOver =
+          polar < orbitLimits.minPolar - EDGE_EPS ? orbitLimits.minPolar - polar
+          : polar > orbitLimits.maxPolar + EDGE_EPS ? -(polar - orbitLimits.maxPolar)
+          : Math.abs(polar - orbitLimits.minPolar) < EDGE_EPS ? EDGE_EPS
+          : Math.abs(polar - orbitLimits.maxPolar) < EDGE_EPS ? -EDGE_EPS
+          : 0
+        if (polarOver !== 0) {
+          polarVelRef.current = Math.sign(polarOver) * (REBOUND_KICK + Math.abs(polarOver) * 4)
+        }
+        const distEdge = EDGE_EPS * 4
+        const distOver =
+          orbitLimits.minDistance != null && dist < orbitLimits.minDistance - distEdge
+            ? orbitLimits.minDistance - dist
+            : orbitLimits.maxDistance != null && dist > orbitLimits.maxDistance + distEdge
+              ? -(dist - orbitLimits.maxDistance)
+              : orbitLimits.minDistance != null && Math.abs(dist - orbitLimits.minDistance) < distEdge
+                ? distEdge
+                : orbitLimits.maxDistance != null && Math.abs(dist - orbitLimits.maxDistance) < distEdge
+                  ? -distEdge
+                  : 0
+        if (distOver !== 0) {
+          distVelRef.current = Math.sign(distOver) * (DIST_REBOUND_KICK + Math.abs(distOver) * 2)
         }
       }, 140)
     }
@@ -517,7 +618,7 @@ function OrbitResetController({ orbitLimits, defaultCam, sceneMode }) {
     // Spring-damper integration (semi-implicit Euler).
     const azAccel = STIFFNESS * azDelta - dampingCoef * azVelRef.current
     const polarAccel = STIFFNESS * polarDelta - dampingCoef * polarVelRef.current
-    const distAccel = STIFFNESS * distDelta - dampingCoef * distVelRef.current
+    const distAccel = DIST_STIFFNESS * distDelta - distDampingCoef * distVelRef.current
     azVelRef.current += azAccel * delta
     polarVelRef.current += polarAccel * delta
     distVelRef.current += distAccel * delta
@@ -1315,17 +1416,21 @@ export default function CrtScene({
                 panSpeed={0.6}
                 rotateSpeed={0.7}
                 target={[cam.targetX, cam.targetY, cam.targetZ]}
-                // While the cage is wide (intro hold + spring-back travel
-                // window) or the user has toggled 'unlock cage' in leva,
-                // remove all clamps so the spring can swing the camera
-                // through the full INTRO_CAM → rest distance.
-                minAzimuthAngle={(cageWide || unlockCage) ? -Math.PI : FREE_ORBIT_LIMITS.minAz}
-                maxAzimuthAngle={(cageWide || unlockCage) ? Math.PI : FREE_ORBIT_LIMITS.maxAz}
-                minPolarAngle={(cageWide || unlockCage) ? 0.01 : FREE_ORBIT_LIMITS.minPolar}
-                maxPolarAngle={(cageWide || unlockCage) ? Math.PI - 0.01 : FREE_ORBIT_LIMITS.maxPolar}
+                // Rotation is wide-open; ElasticOrbitLimits damps both
+                // azimuth and polar past the soft cage. Polar high-end
+                // uses a much stiffer damping coefficient so the camera
+                // can't practically reach the under-floor angle range.
+                // Zoom keeps the classic hard clamp + on-release spring.
+                minAzimuthAngle={-Math.PI}
+                maxAzimuthAngle={Math.PI}
+                minPolarAngle={0.01}
+                maxPolarAngle={Math.PI - 0.01}
                 minDistance={(cageWide || unlockCage) ? 0.1 : FREE_ORBIT_LIMITS.minDistance}
                 maxDistance={(cageWide || unlockCage) ? 50 : FREE_ORBIT_LIMITS.maxDistance}
               />
+              {!introActive && !cageWide && !unlockCage && (
+                <ElasticOrbitLimits soft={FREE_ORBIT_LIMITS} ramp={FREE_ORBIT_RAMP} />
+              )}
               {!introActive && !pauseReturn && <OrbitResetController orbitLimits={FREE_ORBIT_LIMITS} defaultCam={cam} sceneMode={sceneMode} />}
               {introActive && (
                 <CameraIntro

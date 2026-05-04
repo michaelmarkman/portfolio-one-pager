@@ -35,12 +35,26 @@ export default function SystemLog() {
   const [entries, setEntries] = useState([])
   const idRef = useRef(0)
   const queueRef = useRef([])
+  const lastShownRef = useRef(null)
 
   useEffect(() => {
     const start = setTimeout(() => {
       const tick = () => {
-        if (queueRef.current.length === 0) queueRef.current = shuffle(TEMPLATES)
+        if (queueRef.current.length === 0) {
+          queueRef.current = shuffle(TEMPLATES)
+          // Guard the boundary between shuffles — if the freshly-shuffled
+          // queue starts with the line we just showed, swap it with the
+          // next so we never tick the same entry twice in a row.
+          if (
+            queueRef.current.length > 1 &&
+            queueRef.current[0] === lastShownRef.current
+          ) {
+            ;[queueRef.current[0], queueRef.current[1]] =
+              [queueRef.current[1], queueRef.current[0]]
+          }
+        }
         const text = queueRef.current.shift()
+        lastShownRef.current = text
         setEntries((prev) => {
           const next = [...prev, { id: ++idRef.current, text }]
           return next.length > VISIBLE ? next.slice(next.length - VISIBLE) : next

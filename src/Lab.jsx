@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useControls, folder } from 'leva'
+import { track } from '@vercel/analytics'
 import HtmlSource from './scene/HtmlSource.jsx'
 import CrtScene from './scene/CrtScene.jsx'
 
@@ -235,6 +236,9 @@ export default function Lab() {
       setCozyPalette((p) => (p === 'amber-inverted' ? 'amber' : 'amber-inverted'))
     }
     setT({ sceneMode: next })
+    // Tracked here only — the daytime auto-flip in the useEffect below
+    // calls setT directly so it doesn't fire this analytics event.
+    track('scene_toggle', { mode: next })
   }
 
   // Resolve 'auto' to phosphor in lab and to the current cozyPalette in

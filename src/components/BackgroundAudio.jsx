@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { track } from '@vercel/analytics'
 
 /**
  * Background audio with a fixed-position mute toggle. Tries to autoplay
@@ -146,10 +147,12 @@ export default function BackgroundAudio({ src, scratchSrc = '/scratch.mp3', volu
     if (!audio.paused && !audio.muted) {
       audio.muted = true
       audio.pause()
+      track('audio_mute')
     } else {
       audio.muted = false
       audio.volume = volume
       audio.play().catch(() => {})
+      track('audio_unmute')
     }
   }
 
