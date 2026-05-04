@@ -396,17 +396,44 @@ a {
   }
 }
 
-.delay-1 {
+/* Boot sequence cadence — each typewriter line is 1.5s, so delays are
+   spaced 1.5s apart. delay-0 is the BOOT prefix; delay-1/2 are the two
+   headings; delay-3/5 are the bio + LOCATION; delay-bio-body fades in
+   the multi-line paragraph between them. */
+.delay-0 {
   animation-delay: 0.1s;
 }
-.delay-2 {
+.delay-1 {
   animation-delay: 1.6s;
 }
+.delay-2 {
+  animation-delay: 3.1s;
+}
 .delay-3 {
-  animation-delay: 3.2s;
+  animation-delay: 4.6s;
 }
 .delay-4 {
-  animation-delay: 4.8s;
+  animation-delay: 5.6s;
+}
+.delay-5 {
+  /* LOCATION waits for the JS-driven bio body to finish typing
+     (~6.1s start + ~2s of 18ms-per-char typing). */
+  animation-delay: 8.2s;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.fade-in {
+  opacity: 0;
+  animation: fade-in 0.6s ease-in forwards;
+}
+.fade-in.delay-tag {
+  animation-delay: 1.6s;
+}
+.fade-in.delay-bio-body {
+  animation-delay: 5.6s;
 }
 
 .heading-name {
@@ -442,6 +469,18 @@ a {
   color: #fff;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  /* JS typewriter renders the visible portion overlaid on a hidden
+     full-text "shadow" so the paragraph reserves its final wrapped
+     height upfront — LOCATION below doesn't jump as the bio types. */
+  position: relative;
+}
+.bio__body-shadow {
+  visibility: hidden;
+  /* Ensure layout reserves the right height even though it's invisible */
+}
+.bio__body-visible {
+  position: absolute;
+  inset: 0;
 }
 
 /* Slightly off-white inside the captured source — pure white sits at the
@@ -498,6 +537,32 @@ a {
   margin-left: 4px;
 }
 
+/* Periodic system-log ticker below the prompt — dim, monospace, each
+   entry fades in. Wrapper height is locked so adding/removing entries
+   doesn't push the footer around. */
+.system-log {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.78em;
+  color: var(--terminal-dim);
+  line-height: 1.35;
+}
+.system-log__entry {
+  opacity: 0;
+  animation: log-in 0.35s ease-out forwards;
+}
+@keyframes log-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.html-source .system-log {
+  /* CRT vignette + scanlines crush the dim color further; bump up. */
+  color: var(--terminal-mid);
+  font-size: 0.82rem;
+}
+
 @keyframes blink {
   0%,
   100% {
@@ -537,14 +602,23 @@ a {
 .nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem 1rem;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
   margin-left: -0.5rem; /* visually align tap-target padding with the column edge */
+}
+.nav__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
 }
 
 @media (min-width: 640px) {
   .nav {
-    gap: 1.5rem;
     margin-left: 0;
+  }
+  .nav__links {
+    gap: 1.5rem;
   }
 }
 
@@ -602,11 +676,15 @@ a {
    the top-right of the rasterized page so it appears in that corner of
    the CRT screen texture. Click events are routed from the 3D screen
    surface to this element via useScreenInteraction. */
+/* The <audio> element is a sibling of .audio-toggle inside the nav —
+   without controls it has no visual but is still a flex item with gap.
+   Take it out of flow so it doesn't eat the auto-margin space. */
+.nav audio {
+  display: none;
+}
 .audio-toggle {
-  position: absolute;
-  /* Vertically aligned with the TWITTER/LINKEDIN/EMAIL footer links. */
-  bottom: 5rem;
-  right: 4.5rem;
+  /* Lives at the far end of the nav row — parent .nav uses
+     justify-content: space-between to push it opposite the links. */
   padding: 0.35rem;
   background: transparent;
   border: 0;
@@ -615,7 +693,6 @@ a {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  z-index: 5;
   -webkit-tap-highlight-color: transparent;
 }
 /* Match the nav-link hover invert: green box with dark icon. data-fake-hover

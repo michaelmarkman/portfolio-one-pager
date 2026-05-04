@@ -1,8 +1,6 @@
 import { forwardRef } from 'react'
-import SystemHeader from '../components/SystemHeader.jsx'
 import Terminal from '../components/Terminal.jsx'
 import SiteFooter from '../components/SiteFooter.jsx'
-import BackgroundAudio from '../components/BackgroundAudio.jsx'
 
 /**
  * Off-screen 1024×768 DOM hosting the live terminal — the source for
@@ -26,11 +24,9 @@ const HtmlSource = forwardRef(function HtmlSource(
   return (
     <div ref={ref} className={rootClass} aria-hidden="true" style={rootStyle}>
       <div className="html-source__page" style={pageStyle}>
-        <SystemHeader />
         <Terminal {...profile} />
-        <SiteFooter status={status} links={footerLinks} />
+        <SiteFooter status={status} links={footerLinks} audioSrc={audioSrc} />
       </div>
-      {audioSrc && <BackgroundAudio src={audioSrc} />}
     </div>
   )
 })

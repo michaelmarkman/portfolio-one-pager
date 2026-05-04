@@ -96,7 +96,7 @@ export default function Lab() {
     content: folder({
       // Top padding of the source DOM in rem. Higher = content lower on the
       // screen; lower = content higher. Production uses 7.
-      contentTopRem: { value: 4.8, min: 0, max: 14, step: 0.1, label: 'top pad' },
+      contentTopRem: { value: 3.6, min: 0, max: 14, step: 0.1, label: 'top pad' },
       // Multiplies every font size in the lab variant. 1 = production size.
       contentScale: { value: 1.4, min: 0.7, max: 2.5, step: 0.05, label: 'text size' },
     }),
