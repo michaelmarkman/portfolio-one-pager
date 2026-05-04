@@ -183,7 +183,7 @@ export default function Lab() {
         cameraOverride={{
           // Default zoomed in close on the screen face. Free orbit/zoom still
           // available via mouse.
-          position: [-0.82, 1.56, 3.17],
+          position: [-0.76, 1.23, 3.20],
           target: [-0.05, 1.26, 0.36],
           fov: t.fov,
         }}
