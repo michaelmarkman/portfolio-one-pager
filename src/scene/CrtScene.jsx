@@ -326,13 +326,13 @@ function MouseParallax({ strength = 0.08, lerpAmt = 0.025 }) {
     camera.getWorldDirection(tmpDir.current)
     tmpRight.current.crossVectors(tmpDir.current, camera.up).normalize()
     tmpUp.current.crossVectors(tmpRight.current, tmpDir.current).normalize()
-    // Desired pan offset in world space. Negative so the camera drifts
-    // OPPOSITE the cursor — mouse-right shifts the camera left, which makes
-    // the model appear to move with the cursor (counter-parallax / follow).
+    // Desired pan offset in world space. Positive so the camera drifts
+    // WITH the cursor — mouse-right shifts the camera right, which makes
+    // the model appear to drift opposite the cursor (parallax).
     tmpTarget.current
       .copy(tmpRight.current)
-      .multiplyScalar(-mouse.x * strength)
-      .addScaledVector(tmpUp.current, -mouse.y * strength)
+      .multiplyScalar(mouse.x * strength)
+      .addScaledVector(tmpUp.current, mouse.y * strength)
     // Smooth-ease (this IS the damping — small lerpAmt = slower follow).
     prev.current.lerp(tmpTarget.current, lerpAmt)
     // Re-apply offset to both — pan, not look-around.
