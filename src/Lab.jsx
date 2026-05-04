@@ -37,6 +37,18 @@ const FILTER_PRESETS = {
   kodachrome: 'saturate(1.4) contrast(1.08) sepia(0.08) hue-rotate(-4deg)',
 }
 
+// Lerp a hex color toward black by `amount` (0–1). Used to derive the
+// dim text variant from the secondary picker so the user only has to
+// tune two text colors.
+function darkenHex(hex, amount) {
+  const h = (hex || '#000000').replace('#', '')
+  const f = 1 - amount
+  const r = Math.round(parseInt(h.slice(0, 2), 16) * f)
+  const g = Math.round(parseInt(h.slice(2, 4), 16) * f)
+  const b = Math.round(parseInt(h.slice(4, 6), 16) * f)
+  return '#' + [r, g, b].map((c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0')).join('')
+}
+
 /**
  * Experimental page — same scene composition as App.jsx but with live leva
  * controls so you can dial in scale/position/rotation/screen-binding for a
@@ -60,10 +72,13 @@ export default function Lab() {
       // Screen color palette — 'auto' picks phosphor for lab, amber-inverted
       // for cozy. Manual options override.
       // 'amber'           = dark screen, amber phosphor text (classic amber CRT)
-      // 'amber-inverted'  = light amber bg, dark amber text (paper-monitor look)
+      // 'amber-inverted' = light amber bg, dark amber text (paper-monitor)
+      // 'custom'         = pick any bg + text colors via the three pickers
+      //                    in the nested 'custom' folder (only shown when
+      //                    'custom' is selected)
       screenPalette: {
         value: 'auto',
-        options: ['auto', 'phosphor', 'amber', 'amber-inverted', 'mono'],
+        options: ['auto', 'phosphor', 'amber', 'amber-inverted', 'mono', 'custom'],
         label: 'screen',
       },
     }),
@@ -187,6 +202,27 @@ export default function Lab() {
       grainIntensity: { value: 0.15, min: 0, max: 0.6, step: 0.005, label: 'intensity' },
       grainGrayscale: { value: false, label: 'b&w' },
     }),
+    custom: folder({
+      // Three pickers driving the custom screen palette. Only meaningful
+      // when 'screen' is set to 'custom' in the scene folder. Each
+      // control individually conditional-renders so the folder header
+      // hides cleanly when not in custom mode.
+      customBg: {
+        value: '#07130a',
+        label: 'bg',
+        render: (get) => get('Model.scene.screenPalette') === 'custom',
+      },
+      customPrimary: {
+        value: '#15ff00',
+        label: 'primary',
+        render: (get) => get('Model.scene.screenPalette') === 'custom',
+      },
+      customSecondary: {
+        value: '#0f9900',
+        label: 'secondary',
+        render: (get) => get('Model.scene.screenPalette') === 'custom',
+      },
+    }),
   }))
 
   // Each tap to day flips between the two amber looks (light-bg paper
@@ -257,6 +293,20 @@ export default function Lab() {
   // inverts, regardless of sceneMode.
   const screenInvert = effectivePalette === 'amber-inverted'
 
+  // Build the inline-style payload for the 'custom' palette. The three
+  // user-picked colors map to --bg / --terminal-green / --terminal-mid;
+  // --terminal-dim is auto-derived as a darkened secondary so we don't
+  // burn a fourth picker on a value the shader crushes anyway.
+  const customPalette = useMemo(() => {
+    if (effectivePalette !== 'custom') return null
+    return {
+      bg: t.customBg,
+      primary: t.customPrimary,
+      secondary: t.customSecondary,
+      dim: darkenHex(t.customSecondary, 0.35),
+    }
+  }, [effectivePalette, t.customBg, t.customPrimary, t.customSecondary])
+
   const canvasFilter = useMemo(() => {
     const presetKey =
       t.filterPreset === 'auto'
@@ -285,6 +335,8 @@ export default function Lab() {
         sceneMode={t.sceneMode}
         onToggleScene={toggleScene}
         screenInvert={screenInvert}
+        screenPalette={effectivePalette}
+        customPalette={customPalette}
       />
       <CrtScene
         sourceRef={sourceRef}

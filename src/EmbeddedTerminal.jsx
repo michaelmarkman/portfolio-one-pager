@@ -26,7 +26,11 @@ export default function EmbeddedTerminal() {
       <CrtEffects />
       <div className="page__inner">
         <Terminal {...PROFILE} showSystemLog={false} />
-        <SiteFooter status="STATUS: ACTIVE" links={FOOTER_LINKS} />
+        <SiteFooter
+          status="PSST... THIS SITE IS MORE FUN ON DESKTOP"
+          links={FOOTER_LINKS}
+          iconLinks
+        />
       </div>
     </div>
   )

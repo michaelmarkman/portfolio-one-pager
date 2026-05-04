@@ -440,6 +440,11 @@ export default function CrtModel({
         u.uPaletteAmount.value = 0.85
         u.uPaletteColor.value.setRGB(1.05, 1.05, 1.05)
       } else {
+        // Plain phosphor + every per-class palette ('phosphor-inv',
+        // 'paper-phosphor', 'amber-inv', 'paper-amber', 'blue',
+        // 'red-alert'). Each one bakes its colors into the DOM via a
+        // CSS class, so the shader passes the captured texture through
+        // without applying any additional tint.
         u.uPaletteAmount.value = 0
       }
     }

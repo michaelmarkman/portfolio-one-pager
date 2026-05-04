@@ -305,6 +305,15 @@ a {
   filter: invert(1) hue-rotate(180deg);
 }
 
+/* Custom-palette modifier. The actual color values come from leva via
+   inline style on the source root (see HtmlSource). The class itself
+   only re-anchors text inheritance, since the global body sets color
+   from the original --terminal-green and that resolved value would
+   otherwise carry into descendants regardless of the variable swap. */
+.html-source--custom {
+  color: var(--terminal-green);
+}
+
 .phosphor-glow {
   position: fixed;
   inset: 0;
@@ -435,6 +444,22 @@ a {
   /* LOCATION waits for the JS-driven bio body to finish typing
      (~6.1s start + ~2s of 18ms-per-char typing). */
   animation-delay: 8.2s;
+}
+
+/* Mobile boot cadence — halve each typewriter duration and gap so the
+   embedded view doesn't make a phone visitor sit through 8s of intro
+   before the link icons matter. Bio.jsx mirrors the JS-driven timings
+   off the same breakpoint. */
+@media (max-width: 768px) {
+  .typewriter {
+    animation-duration: 0.7s;
+  }
+  .delay-0 { animation-delay: 0.05s; }
+  .delay-1 { animation-delay: 0.75s; }
+  .delay-2 { animation-delay: 1.45s; }
+  .delay-3 { animation-delay: 2.15s; }
+  .delay-4 { animation-delay: 2.85s; }
+  .delay-5 { animation-delay: 4.0s; }
 }
 
 @keyframes fade-in {
@@ -663,6 +688,20 @@ a {
   color: var(--bg);
 }
 
+/* Icon-mode link (mobile / embedded terminal). The SVGs use width/
+   height of 1em, so font-size here drives icon size. Adds a touch of
+   horizontal padding for thumb targets without making the icons feel
+   crowded. */
+.nav__link--icon {
+  font-size: 1.4rem;
+  letter-spacing: 0;
+  padding: 0.5rem 0.75rem;
+  line-height: 0;
+}
+.nav--icons .nav__links {
+  gap: 0.5rem;
+}
+
 /* Boot overlay — full-viewport CRT-styled loading screen shown while the
    GLB + scene assets are still loading. Opacity is driven from JS via
    useProgress.active; the transition runs the fade. */
@@ -687,6 +726,7 @@ a {
   font-size: 13px;
   opacity: 0.75;
 }
+
 
 /* Mute toggle — lives inside the off-screen html-source, positioned at
    the top-right of the rasterized page so it appears in that corner of

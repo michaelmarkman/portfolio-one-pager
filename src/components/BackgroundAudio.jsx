@@ -14,12 +14,15 @@ import { useEffect, useRef, useState } from 'react'
  */
 const SWAP_DELAY_MS = 1000
 
-export default function BackgroundAudio({ src, scratchSrc = '/scratch.mp3', volume = 0.3 }) {
+export default function BackgroundAudio({ src, scratchSrc = '/scratch.mp3', volume = 0.18 }) {
   const audioRefs = useRef(new Map())
   const scratchRef = useRef(null)
-  const [muted, setMuted] = useState(false)
-  const mutedRef = useRef(muted)
-  useEffect(() => { mutedRef.current = muted }, [muted])
+  // `audible` is the source of truth for the icon — it derives from the
+  // active audio element's actual play/pause/volumechange events rather
+  // than a separate React mute flag. Anything that pauses or mutes the
+  // element (visibility change, autoplay rejection, src swap, manual
+  // toggle) flows through these events, so the icon never lies.
+  const [audible, setAudible] = useState(false)
   // Set of every src seen so far — we render one <audio> per entry so
   // each track keeps its own currentTime independently.
   const [knownSrcs, setKnownSrcs] = useState(() => new Set([src]))
@@ -54,8 +57,7 @@ export default function BackgroundAudio({ src, scratchSrc = '/scratch.mp3', volu
     const audio = audioRefs.current.get(src)
     if (!audio) return
     audio.volume = volume
-    audio.muted = mutedRef.current
-    if (mutedRef.current) return
+    audio.muted = false
     audio.play().catch(() => {
       const start = () => {
         audio.muted = false
@@ -68,20 +70,41 @@ export default function BackgroundAudio({ src, scratchSrc = '/scratch.mp3', volu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Subscribe to play/pause/volumechange on the active <audio> element so
+  // `audible` (icon state) always tracks what the browser is doing. Re-
+  // bound when src changes (the element switches with the track).
+  useEffect(() => {
+    const audio = audioRefs.current.get(src)
+    if (!audio) return
+    const sync = () => setAudible(!audio.paused && !audio.muted)
+    sync()
+    audio.addEventListener('play', sync)
+    audio.addEventListener('pause', sync)
+    audio.addEventListener('volumechange', sync)
+    return () => {
+      audio.removeEventListener('play', sync)
+      audio.removeEventListener('pause', sync)
+      audio.removeEventListener('volumechange', sync)
+    }
+  }, [src, knownSrcs])
+
   // src change: kick the scratch sfx immediately (still in the click
   // call stack so the browser counts it as a user gesture), pause the
   // outgoing track, then 1s later play the new one. Each <audio>
   // element preserves its own currentTime, so resuming a track picks
-  // up where it was paused.
+  // up where it was paused. Whether the user is currently muted is read
+  // off the outgoing element directly so the swap matches reality even
+  // if the icon hasn't re-rendered yet.
   const prevSrcRef = useRef(src)
   useEffect(() => {
     if (prevSrcRef.current === src) return
     const prev = prevSrcRef.current
     prevSrcRef.current = src
     const outgoing = audioRefs.current.get(prev)
+    const wasMuted = outgoing ? outgoing.muted : false
     if (outgoing) outgoing.pause()
     const scratch = scratchRef.current
-    if (!mutedRef.current && scratch) {
+    if (!wasMuted && scratch) {
       scratch.currentTime = 0
       scratch.volume = Math.min(1, volume * 2.5)
       scratch.play().catch(() => {})
@@ -90,41 +113,43 @@ export default function BackgroundAudio({ src, scratchSrc = '/scratch.mp3', volu
       const incoming = audioRefs.current.get(src)
       if (!incoming) return
       incoming.volume = volume
-      incoming.muted = mutedRef.current
-      if (!mutedRef.current) incoming.play().catch(() => {})
+      incoming.muted = wasMuted
+      if (!wasMuted) incoming.play().catch(() => {})
     }, SWAP_DELAY_MS)
     return () => clearTimeout(swapTimer)
   }, [src, volume])
 
   // Pause when the tab loses focus, resume when it returns (only if
-  // the user hadn't manually muted). Doesn't touch the React `muted`
-  // state so the icon keeps reflecting the user's intent.
+  // the active track wasn't manually muted). Reads .muted off the
+  // element directly so it can't drift from a stale React snapshot.
   useEffect(() => {
     const onVisibility = () => {
       const audio = audioRefs.current.get(src)
       if (!audio) return
       if (document.hidden) {
         audio.pause()
-      } else if (!muted) {
+      } else if (!audio.muted) {
         audio.play().catch(() => {})
       }
     }
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
-  }, [muted, src])
+  }, [src])
 
   const toggle = () => {
     const audio = audioRefs.current.get(src)
     if (!audio) return
-    if (muted) {
+    // Drive the action off the element's current state, not React's —
+    // even if the icon momentarily disagrees, the click does the right
+    // thing relative to whatever's actually playing right now. The
+    // 'play'/'pause'/'volumechange' listeners then sync `audible` back.
+    if (!audio.paused && !audio.muted) {
+      audio.muted = true
+      audio.pause()
+    } else {
       audio.muted = false
       audio.volume = volume
       audio.play().catch(() => {})
-      setMuted(false)
-    } else {
-      audio.muted = true
-      audio.pause()
-      setMuted(true)
     }
   }
 
@@ -144,11 +169,11 @@ export default function BackgroundAudio({ src, scratchSrc = '/scratch.mp3', volu
       <button
         className="audio-toggle"
         onClick={toggle}
-        aria-label={muted ? 'Unmute background audio' : 'Mute background audio'}
-        aria-pressed={!muted}
+        aria-label={audible ? 'Mute background audio' : 'Unmute background audio'}
+        aria-pressed={audible}
         type="button"
       >
-        {muted ? (
+        {!audible ? (
           <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M11 5L6 9H2v6h4l5 4V5z" />
             <line x1="23" y1="9" x2="17" y2="15" />

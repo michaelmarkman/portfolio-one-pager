@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react'
 import TypewriterLine from './TypewriterLine.jsx'
 
-const TYPE_SPEED_MS = 18 // per character — snappy but readable
-const BODY_START_DELAY_MS = 6100 // start typing right after INITIALIZING BIO finishes (delay-3 + 1.5s)
+// Mobile gets the embedded terminal view; the CSS typewriter durations
+// are halved there too, so we mirror the speedup here.
+const isMobile =
+  typeof window !== 'undefined' &&
+  window.matchMedia('(max-width: 768px)').matches
+const TYPE_SPEED_MS = isMobile ? 9 : 18 // per character — snappy but readable
+const BODY_START_DELAY_MS = isMobile ? 2850 : 6100 // delay-3 + typing duration
 
 function TypingBody({ currentRole }) {
   const text = `Designer who codes. Obsessed with craft and novel ways of interacting with computers. Currently leading design at ${currentRole.label}.`

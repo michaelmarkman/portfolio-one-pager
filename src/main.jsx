@@ -1,5 +1,6 @@
 import { StrictMode, lazy, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
+import { Analytics } from '@vercel/analytics/react'
 import '@fontsource/space-mono/400.css'
 import '@fontsource/space-mono/700.css'
 import '@fontsource/space-mono/400-italic.css'
@@ -28,5 +29,6 @@ createRoot(document.getElementById('root')).render(
         <Lab />
       </Suspense>
     )}
+    <Analytics />
   </StrictMode>,
 )
