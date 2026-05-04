@@ -123,11 +123,11 @@ function TransitionDriver({ targetT, transitionTRef }) {
 // light warm haze (afternoon). Production has its own constant fog handled
 // outside the transition.
 const FOG_LAB = { color: '#02160c', density: 0.115 }
-const FOG_COZY = { color: '#e8d8c2', density: 0.04 }
-// Background: lab uses the fog color (so the far edges read seamless);
-// cozy is a soft sunset beige.
+// Background and fog share the same color in cozy mode so the wood floor
+// fades smoothly into the sky — no visible horizon seam.
 const BG_LAB = '#02160c'
-const BG_COZY = '#f4e4cf'
+const BG_COZY = '#efddc4'
+const FOG_COZY = { color: BG_COZY, density: 0.08 }
 
 /**
  * Mutates scene.fog (color + density) each frame based on transitionTRef.
