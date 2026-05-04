@@ -272,12 +272,13 @@ export default function CrtModel({
       glassGeo = screenMesh.geometry.clone()
       if (glassMode === 'physical') {
         // PBR glass — uses scene.environment for uniform IBL reflection
-        // (set up by <Environment /> in CrtScene). Pure black base so the
-        // visible material IS the reflection only; additive blending then
-        // ADDS that reflection on top of the underlying CRT shader instead
-        // of obscuring it. Roughness controls how sharp the reflection is.
+        // (set up by <Environment /> in CrtScene). Dim-gray base instead
+        // of pure black so the dust map's diffuse contribution actually
+        // shows through additive blending; otherwise color * map = 0 and
+        // the grunge texture is invisible. Roughness controls how sharp
+        // the reflection is.
         glassMat = new THREE.MeshPhysicalMaterial({
-          color: 0x000000,
+          color: 0x222222,
           map: dustTex,
           metalness: 0,
           roughness: glass.roughness ?? 0.18,

@@ -98,7 +98,7 @@ export default function Lab() {
       // screen; lower = content higher. Production uses 7.
       contentTopRem: { value: 4.8, min: 0, max: 14, step: 0.1, label: 'top pad' },
       // Multiplies every font size in the lab variant. 1 = production size.
-      contentScale: { value: 1.45, min: 0.7, max: 2.5, step: 0.05, label: 'text size' },
+      contentScale: { value: 1.4, min: 0.7, max: 2.5, step: 0.05, label: 'text size' },
     }),
     camera: folder({
       fov: { value: 30, min: 10, max: 90, step: 0.5 },

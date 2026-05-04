@@ -212,7 +212,7 @@ a {
 .html-source .bio {
   font-size: 1rem;
   line-height: 1.55;
-  margin-top: 1.25rem;
+  margin-top: 2rem;
 }
 .html-source .bio__meta {
   margin-top: 0.75rem;
@@ -225,7 +225,7 @@ a {
   color: var(--terminal-mid);
 }
 .html-source .prompt {
-  margin-top: 0.75rem;
+  margin-top: 1.5rem;
 }
 .html-source .site-footer {
   margin-top: 1.75rem;
@@ -605,7 +605,7 @@ a {
 .audio-toggle {
   position: absolute;
   /* Vertically aligned with the TWITTER/LINKEDIN/EMAIL footer links. */
-  bottom: 6.5rem;
+  bottom: 5rem;
   right: 4.5rem;
   padding: 0.35rem;
   background: transparent;
