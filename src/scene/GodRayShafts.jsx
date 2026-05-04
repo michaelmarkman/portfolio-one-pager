@@ -90,7 +90,16 @@ export default function GodRayShafts({
   return (
     <group ref={groupRef}>
       {planes.map((p) => (
-        <mesh key={p.key} position={p.position} rotation={rotation}>
+        // renderOrder=10 forces these planes to draw AFTER the wood floor
+        // (which is also transparent and ends up sorted in front of the
+        // shafts otherwise — without this the rays get overdrawn by the
+        // floor where they cross it).
+        <mesh
+          key={p.key}
+          position={p.position}
+          rotation={rotation}
+          renderOrder={10}
+        >
           <planeGeometry args={size} />
           <meshBasicMaterial
             map={stripeTexture}
