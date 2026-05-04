@@ -104,7 +104,10 @@ export default function Lab() {
       fov: { value: 30, min: 10, max: 90, step: 0.5 },
       // World-units the orbit-target shifts toward where the mouse is.
       // 0 disables parallax. ~0.05-0.15 reads as a subtle living shot.
-      mouseParallax: { value: 0.02, min: 0, max: 0.4, step: 0.01, label: 'parallax' },
+      mouseParallax: { value: 0.03, min: 0, max: 0.4, step: 0.01, label: 'parallax' },
+      // Production-locked by default — flip on for unrestricted exploration.
+      enableZoom: { value: false, label: 'zoom unlock' },
+      enablePan: { value: false, label: 'pan unlock' },
     }),
     grade: folder({
       // Renderer tone-mapping enum + exposure. ACESFilmic is R3F's default
@@ -117,6 +120,14 @@ export default function Lab() {
         label: 'tone',
       },
       toneExposure: { value: 1, min: 0, max: 3, step: 0.05, label: 'exposure' },
+    }),
+    grid: folder({
+      // Lab synthwave floor grid — toggle off to see the scene without it,
+      // or change the line colors. Section lines are the bright ones every
+      // 2.5 units; cell lines fill in between every 0.5 units.
+      gridEnabled: { value: true, label: 'enabled' },
+      gridSection: { value: '#163e21', label: 'section' },
+      gridCell: { value: '#004522', label: 'cell' },
     }),
     filter: folder({
       // CSS filter on .three-stage — applies to the rendered canvas pixels
@@ -165,11 +176,21 @@ export default function Lab() {
           fov: t.fov,
         }}
         mouseParallax={t.mouseParallax}
+        enableZoom={t.enableZoom}
+        enablePan={t.enablePan}
         tone={useMemo(
           () => ({ mode: t.toneMode, exposure: t.toneExposure }),
           [t.toneMode, t.toneExposure],
         )}
         canvasFilter={canvasFilter}
+        gridOverride={useMemo(
+          () => ({
+            enabled: t.gridEnabled,
+            sectionColor: t.gridSection,
+            cellColor: t.gridCell,
+          }),
+          [t.gridEnabled, t.gridSection, t.gridCell],
+        )}
         modelTransform={{
           scale: t.scale,
           position: [t.posX, t.posY, t.posZ],

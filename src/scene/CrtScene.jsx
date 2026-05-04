@@ -26,7 +26,7 @@ const LIGHTS = {
   keyDir: 1.05,
   rimDir: 0.5,
   fillDir: 0.3,
-  phosphorIntensity: 0.4,
+  phosphorIntensity: 0.05,
   phosphorColor: '#15ff00',
   phosphorDistance: 7,
 }
@@ -52,6 +52,16 @@ const ORBIT_LIMITS = {
   maxAz: Math.PI * 0.04,
   minPolar: Math.PI * 0.45,
   maxPolar: Math.PI * 0.55,
+}
+
+// Free-orbit cage for the lab/production page — wider than ORBIT_LIMITS
+// since the lab framing sits at azimuth ~-15° and we want some swing room.
+// Polar is kept near horizontal so users can't tilt straight up/down.
+const FREE_ORBIT_LIMITS = {
+  minAz: -Math.PI * 0.20,    // ~-36°
+  maxAz: Math.PI * 0.04,     // ~+7°
+  minPolar: Math.PI * 0.38,  // ~68°
+  maxPolar: Math.PI * 0.55,  // ~99°
 }
 
 const TONE_MAP = {
@@ -122,30 +132,32 @@ function IdleSway({ children }) {
  * starting azimuth/polar. Underdamped so it overshoots and settles —
  * gives a "bounce" feel, especially when released at a cage limit.
  */
-function OrbitResetController({ orbitLimits }) {
+function OrbitResetController({ orbitLimits, defaultCam }) {
   const controls = useThree((s) => s.controls)
   const draggingRef = useRef(false)
   const azVelRef = useRef(0)
   const polarVelRef = useRef(0)
 
-  // Default azimuth + polar derived from CAMERA position relative to target.
-  const dx = CAMERA.posX - CAMERA.targetX
-  const dy = CAMERA.posY - CAMERA.targetY
-  const dz = CAMERA.posZ - CAMERA.targetZ
+  // Default azimuth + polar derived from defaultCam position relative to target.
+  const dx = defaultCam.posX - defaultCam.targetX
+  const dy = defaultCam.posY - defaultCam.targetY
+  const dz = defaultCam.posZ - defaultCam.targetZ
   const distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
   const targetAzimuth = Math.atan2(dx, dz)
   const targetPolar = Math.acos(dy / distance)
 
-  // Spring tuning — underdamped so the rebound is visible but settles fast.
-  const STIFFNESS = 12
-  const DAMPING_RATIO = 0.55 // 1 = critical, <1 bouncy, >1 sluggish
+  // Spring tuning — softer + more damped than a typical spring. Lower
+  // stiffness means a slower return; higher damping ratio means it
+  // settles without bouncing past the default.
+  const STIFFNESS = 4
+  const DAMPING_RATIO = 0.85 // 1 = critical, <1 bouncy, >1 sluggish
   const dampingCoef = 2 * Math.sqrt(STIFFNESS) * DAMPING_RATIO
 
   // On release, kick velocity AWAY from the cage limit if user was sitting
   // at it — sells the "tug at the wall" rubber-band feel before springing
   // back through the default.
   const EDGE_EPS = 0.005
-  const REBOUND_KICK = 1.6 // rad/sec impulse magnitude
+  const REBOUND_KICK = 1.0 // rad/sec impulse magnitude
 
   useEffect(() => {
     if (!controls) return
@@ -400,6 +412,9 @@ export default function CrtScene({
   mouseParallax = 0,
   tone,
   canvasFilter,
+  gridOverride,
+  enableZoom = false,
+  enablePan = false,
   cameraOverride,
   onCameraChange,
 }) {
@@ -530,23 +545,26 @@ export default function CrtScene({
             <fogExp2 attach="fog" args={['#171c19', 0.085]} />
           )}
 
-          {labBackground ? (
-            // Lab: phosphor-green perspective grid receding into fog.
+          {labBackground && gridOverride?.enabled !== false && (
+            // Lab: muted phosphor-green grid receding into fog. Section
+            // lines stay visible against the dark green fog; cell lines
+            // add a subtle density layer.
             <Grid
               position={[0, 0.001, 0]}
               args={[40, 40]}
               cellSize={0.5}
-              cellColor="#0d3a23"
-              cellThickness={0.6}
+              cellColor={gridOverride?.cellColor ?? '#004522'}
+              cellThickness={0.9}
               sectionSize={2.5}
-              sectionColor="#3fff8a"
-              sectionThickness={1.4}
+              sectionColor={gridOverride?.sectionColor ?? '#163e21'}
+              sectionThickness={1.8}
               fadeDistance={22}
               fadeStrength={1.4}
               infiniteGrid
               followCamera={false}
             />
-          ) : (
+          )}
+          {!labBackground && (
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
               <planeGeometry args={[120, 120]} />
               <meshStandardMaterial color="#181d1a" roughness={0.92} metalness={0.05} />
@@ -623,18 +641,24 @@ export default function CrtScene({
           </Suspense>
 
           {freeOrbit ? (
-            <OrbitControls
-              makeDefault
-              enableZoom
-              enablePan
-              enableDamping
-              // Lower zoomSpeed + heavier damping = silky-smooth wheel zoom.
-              dampingFactor={0.12}
-              zoomSpeed={0.4}
-              rotateSpeed={0.7}
-              panSpeed={0.6}
-              target={[cam.targetX, cam.targetY, cam.targetZ]}
-            />
+            <>
+              <OrbitControls
+                makeDefault
+                enableZoom={enableZoom}
+                enablePan={enablePan}
+                enableDamping
+                dampingFactor={0.12}
+                zoomSpeed={0.4}
+                panSpeed={0.6}
+                rotateSpeed={0.7}
+                target={[cam.targetX, cam.targetY, cam.targetZ]}
+                minAzimuthAngle={FREE_ORBIT_LIMITS.minAz}
+                maxAzimuthAngle={FREE_ORBIT_LIMITS.maxAz}
+                minPolarAngle={FREE_ORBIT_LIMITS.minPolar}
+                maxPolarAngle={FREE_ORBIT_LIMITS.maxPolar}
+              />
+              <OrbitResetController orbitLimits={FREE_ORBIT_LIMITS} defaultCam={cam} />
+            </>
           ) : (
             <>
               <OrbitControls
@@ -651,7 +675,7 @@ export default function CrtScene({
                 minPolarAngle={ORBIT_LIMITS.minPolar}
                 maxPolarAngle={ORBIT_LIMITS.maxPolar}
               />
-              <OrbitResetController orbitLimits={ORBIT_LIMITS} />
+              <OrbitResetController orbitLimits={ORBIT_LIMITS} defaultCam={cam} />
             </>
           )}
           {onCameraChange && <CameraSpy onChange={onCameraChange} />}
