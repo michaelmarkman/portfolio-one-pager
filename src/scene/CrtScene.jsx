@@ -798,7 +798,7 @@ export default function CrtScene({
                 // Higher dampingFactor + lower zoomSpeed = silky inertial
                 // wheel zoom that decays slowly instead of snapping.
                 dampingFactor={0.18}
-                zoomSpeed={0.05}
+                zoomSpeed={0.1}
                 panSpeed={0.6}
                 rotateSpeed={0.7}
                 target={[cam.targetX, cam.targetY, cam.targetZ]}

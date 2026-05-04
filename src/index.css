@@ -605,12 +605,12 @@ a {
 .audio-toggle {
   position: absolute;
   /* Vertically aligned with the TWITTER/LINKEDIN/EMAIL footer links. */
-  bottom: 7rem;
+  bottom: 6.5rem;
   right: 4.5rem;
-  padding: 0;
-  background: none;
+  padding: 0.35rem;
+  background: transparent;
   border: 0;
-  color: #3fff8a;
+  color: var(--terminal-green);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -618,8 +618,12 @@ a {
   z-index: 5;
   -webkit-tap-highlight-color: transparent;
 }
-.audio-toggle:hover {
-  opacity: 0.7;
+/* Match the nav-link hover invert: green box with dark icon. data-fake-hover
+   is set by useScreenInteraction when the 3D cursor is over the button. */
+.audio-toggle:hover,
+.audio-toggle[data-fake-hover] {
+  background-color: var(--terminal-green);
+  color: var(--bg);
 }
 .audio-toggle:focus {
   outline: none;
