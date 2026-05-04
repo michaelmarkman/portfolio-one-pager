@@ -6,6 +6,7 @@ import * as THREE from 'three'
 import CrtModel from './CrtModel.jsx'
 import DustField from './DustField.jsx'
 import WindowBlindsLight from './WindowBlindsLight.jsx'
+import GodRayShafts from './GodRayShafts.jsx'
 import { useHtmlCanvasTexture } from './useHtmlCanvasTexture.js'
 
 const CAMERA = {
@@ -484,7 +485,7 @@ function LoadingOverlay({ modelReady }) {
   )
 }
 
-function CrtScreen({ sourceRef, modelUrl, debugMeshes, modelTransform, screenForward, remapScreenUV, screenUVRotation, screenUVFlipX, screenUVFlipY, hideMeshes, useHitUv, enableGlassMesh, enableBackOccluder, glassOverride, glassMode, onModelReady }) {
+function CrtScreen({ sourceRef, modelUrl, debugMeshes, modelTransform, screenForward, remapScreenUV, screenUVRotation, screenUVFlipX, screenUVFlipY, hideMeshes, useHitUv, enableGlassMesh, enableBackOccluder, glassOverride, glassMode, screenPalette, onModelReady }) {
   const { texture } = useHtmlCanvasTexture(sourceRef)
   return (
     <CrtModel
@@ -505,6 +506,7 @@ function CrtScreen({ sourceRef, modelUrl, debugMeshes, modelTransform, screenFor
       enableGlassMesh={enableGlassMesh}
       enableBackOccluder={enableBackOccluder}
       glassMode={glassMode}
+      screenPalette={screenPalette}
       onModelReady={onModelReady}
     />
   )
@@ -532,6 +534,8 @@ export default function CrtScene({
   envRotationY = 0,
   envBlur = 0,
   labBackground = false,
+  sceneMode, // 'lab' | 'cozy' | undefined (falls back to labBackground)
+  screenPalette,
   showLeva = false,
   mouseParallax = 0,
   idleBob = 0,
@@ -562,6 +566,10 @@ export default function CrtScene({
     const t = setTimeout(() => setCageWide(false), 3000)
     return () => clearTimeout(t)
   }, [introActive])
+
+  // sceneMode wins over the legacy labBackground bool when both passed.
+  const isCozy = sceneMode === 'cozy'
+  const isLab = !isCozy && labBackground
 
   const cam = {
     posX: cameraOverride?.position?.[0] ?? CAMERA.posX,
@@ -622,6 +630,7 @@ export default function CrtScene({
       <div className="phosphor-glow" aria-hidden="true" />
       <div className="three-stage" style={canvasFilter ? { filter: canvasFilter } : undefined}>
         <Canvas
+          shadows="soft"
           dpr={[1, 3]}
           gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
           camera={{
@@ -674,25 +683,32 @@ export default function CrtScene({
             seed={4.2}
             dip={0.12}
           />
-          <FlickerPointLight
-            position={[0, 0.2, 1.6]}
-            baseIntensity={lights.phosphorIntensity}
-            color={lights.phosphorColor}
-            distance={lights.phosphorDistance}
-            decay={2}
-            seed={0}
-            dip={0.4}
-          />
+          {!isCozy && (
+            <FlickerPointLight
+              position={[0, 0.2, 1.6]}
+              baseIntensity={lights.phosphorIntensity}
+              color={lights.phosphorColor}
+              distance={lights.phosphorDistance}
+              decay={2}
+              seed={0}
+              dip={0.4}
+            />
+          )}
 
-          {/* Atmospheric fog. Lab uses a deeper green tint with denser fog
-              for the phosphor/synthwave atmosphere. */}
-          {labBackground ? (
+          {/* Atmospheric fog: lab is dense dark green for synthwave, cozy
+              is light warm haze for afternoon sun, production is neutral. */}
+          {isCozy ? (
+            <>
+              <color attach="background" args={['#f4e4cf']} />
+              <fogExp2 attach="fog" args={['#e8d8c2', 0.04]} />
+            </>
+          ) : isLab ? (
             <fogExp2 attach="fog" args={['#02160c', 0.115]} />
           ) : (
             <fogExp2 attach="fog" args={['#171c19', 0.085]} />
           )}
 
-          {labBackground && gridOverride?.enabled !== false && (
+          {isLab && gridOverride?.enabled !== false && (
             // Lab: muted phosphor-green grid receding into fog. Section
             // lines stay visible against the dark green fog; cell lines
             // add a subtle density layer.
@@ -711,7 +727,13 @@ export default function CrtScene({
               followCamera={false}
             />
           )}
-          {!labBackground && (
+          {isCozy && (
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
+              <planeGeometry args={[120, 120]} />
+              <meshStandardMaterial color="#d8c3a5" roughness={0.95} metalness={0} />
+            </mesh>
+          )}
+          {!isCozy && !isLab && (
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
               <planeGeometry args={[120, 120]} />
               <meshStandardMaterial color="#181d1a" roughness={0.92} metalness={0.05} />
@@ -720,19 +742,19 @@ export default function CrtScene({
 
           {/* Soft contact shadow under the TV — grounds the model. */}
           <ContactShadows
-            position={[0, 0.01, labBackground ? 0 : 1]}
+            position={[0, 0.01, isLab ? 0 : 1]}
             scale={6}
             blur={2.6}
             far={2}
-            opacity={labBackground ? 0.7 : 0.55}
+            opacity={isLab ? 0.7 : isCozy ? 0.45 : 0.55}
             resolution={512}
-            color="#000000"
+            color={isCozy ? '#3a2a1a' : '#000000'}
           />
 
           {/* Lab atmospherics: a big phosphor-green halo behind the model
               + a warm rim from the side for a hint of color separation +
               the dust motes from production for that volumetric grit. */}
-          {labBackground && (
+          {isLab && (
             <>
               <pointLight
                 position={[0, 2.0, -2.0]}
@@ -759,8 +781,36 @@ export default function CrtScene({
             </>
           )}
 
+          {/* Cozy daytime: warm directional sun w/ real-time shadows,
+              hemisphere fill for natural sky/ground tinting, blinds on
+              the floor + slanted god-ray shafts above, warm dust motes. */}
+          {isCozy && (
+            <>
+              <hemisphereLight args={['#cfe6ff', '#caa37a', 0.55]} />
+              <directionalLight
+                position={[6, 5, 4]}
+                intensity={1.6}
+                color="#ffd9a3"
+                castShadow
+                shadow-mapSize-width={2048}
+                shadow-mapSize-height={2048}
+                shadow-bias={-0.0005}
+                shadow-normalBias={0.02}
+                shadow-camera-near={0.5}
+                shadow-camera-far={20}
+                shadow-camera-left={-6}
+                shadow-camera-right={6}
+                shadow-camera-top={6}
+                shadow-camera-bottom={-6}
+              />
+              <WindowBlindsLight />
+              <GodRayShafts />
+              <DustField palette="warm" />
+            </>
+          )}
+
           {/* Production-only warm spotlight + window blinds + dust. */}
-          {!labBackground && (
+          {!isLab && !isCozy && (
             <>
               <spotLight
                 position={[0, 6, 1]}
@@ -779,10 +829,10 @@ export default function CrtScene({
 
           <Suspense fallback={null}>
             {freeOrbit ? (
-              <CrtScreen sourceRef={sourceRef} modelUrl={modelUrl} debugMeshes={debugMeshes} modelTransform={modelTransform} screenForward={screenForward} remapScreenUV={remapScreenUV} screenUVRotation={screenUVRotation} screenUVFlipX={screenUVFlipX} screenUVFlipY={screenUVFlipY} hideMeshes={hideMeshes} useHitUv={useHitUv} enableGlassMesh={enableGlassMesh} enableBackOccluder={enableBackOccluder} glassOverride={glassOverride} glassMode={glassMode} onModelReady={handleModelReady} />
+              <CrtScreen sourceRef={sourceRef} modelUrl={modelUrl} debugMeshes={debugMeshes} modelTransform={modelTransform} screenForward={screenForward} remapScreenUV={remapScreenUV} screenUVRotation={screenUVRotation} screenUVFlipX={screenUVFlipX} screenUVFlipY={screenUVFlipY} hideMeshes={hideMeshes} useHitUv={useHitUv} enableGlassMesh={enableGlassMesh} enableBackOccluder={enableBackOccluder} glassOverride={glassOverride} glassMode={glassMode} screenPalette={screenPalette} onModelReady={handleModelReady} />
             ) : (
               <IdleSway>
-                <CrtScreen sourceRef={sourceRef} modelUrl={modelUrl} debugMeshes={debugMeshes} modelTransform={modelTransform} screenForward={screenForward} remapScreenUV={remapScreenUV} screenUVRotation={screenUVRotation} screenUVFlipX={screenUVFlipX} screenUVFlipY={screenUVFlipY} hideMeshes={hideMeshes} useHitUv={useHitUv} enableGlassMesh={enableGlassMesh} enableBackOccluder={enableBackOccluder} glassOverride={glassOverride} glassMode={glassMode} onModelReady={handleModelReady} />
+                <CrtScreen sourceRef={sourceRef} modelUrl={modelUrl} debugMeshes={debugMeshes} modelTransform={modelTransform} screenForward={screenForward} remapScreenUV={remapScreenUV} screenUVRotation={screenUVRotation} screenUVFlipX={screenUVFlipX} screenUVFlipY={screenUVFlipY} hideMeshes={hideMeshes} useHitUv={useHitUv} enableGlassMesh={enableGlassMesh} enableBackOccluder={enableBackOccluder} glassOverride={glassOverride} glassMode={glassMode} screenPalette={screenPalette} onModelReady={handleModelReady} />
               </IdleSway>
             )}
           </Suspense>

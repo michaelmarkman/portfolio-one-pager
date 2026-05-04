@@ -682,6 +682,34 @@ a {
 .nav audio {
   display: none;
 }
+
+/* Right-side action cluster in the footer nav: day/night + mute,
+   side by side, sitting opposite the link list via the parent nav's
+   justify-content: space-between. */
+.nav__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+.day-night-toggle {
+  padding: 0.35rem;
+  background: transparent;
+  border: 0;
+  color: var(--terminal-green);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.day-night-toggle:hover,
+.day-night-toggle[data-fake-hover] {
+  background-color: var(--terminal-green);
+  color: var(--bg);
+}
+.day-night-toggle:focus {
+  outline: none;
+}
 .audio-toggle {
   /* Lives at the far end of the nav row — parent .nav uses
      justify-content: space-between to push it opposite the links. */

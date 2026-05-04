@@ -11,12 +11,26 @@ const BOX = {
 const SPEED_MIN = 0.025
 const SPEED_MAX = 0.07
 
+const PALETTES = {
+  phosphor: {
+    front: '#9bff8a',
+    back: '#dde6df',
+    opacity: 0.32,
+  },
+  warm: {
+    front: '#fff3d8',
+    back: '#e0c8a8',
+    opacity: 0.4,
+  },
+}
+
 /**
  * Volumetric dust drifting upward through the scene. Phosphor-green tint at
  * the front of the box (closest to camera) fading to white at the back.
  */
-export default function DustField() {
+export default function DustField({ palette = 'phosphor' }) {
   const pointsRef = useRef()
+  const cfg = PALETTES[palette] ?? PALETTES.phosphor
 
   const { geometry, speeds } = useMemo(() => {
     const positions = new Float32Array(COUNT * 3)
@@ -53,10 +67,10 @@ export default function DustField() {
     return new THREE.ShaderMaterial({
       uniforms: {
         uMap: { value: spriteTexture },
-        uColorFront: { value: new THREE.Color('#9bff8a') },
-        uColorBack: { value: new THREE.Color('#dde6df') },
+        uColorFront: { value: new THREE.Color(cfg.front) },
+        uColorBack: { value: new THREE.Color(cfg.back) },
         uZRange: { value: new THREE.Vector2(BOX.zMin, BOX.zMax) },
-        uOpacity: { value: 0.32 },
+        uOpacity: { value: cfg.opacity },
       },
       vertexShader: /* glsl */ `
         varying float vDepth;
@@ -86,7 +100,7 @@ export default function DustField() {
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     })
-  }, [spriteTexture])
+  }, [spriteTexture, cfg.front, cfg.back, cfg.opacity])
 
   useFrame((_, delta) => {
     const points = pointsRef.current

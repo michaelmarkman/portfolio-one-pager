@@ -42,7 +42,23 @@ export default function Lab() {
   const sourceRef = useRef(null)
   const [camDebug, setCamDebug] = useState(null)
 
-  const t = useControls('Model', {
+  const [t, setT] = useControls('Model', () => ({
+    scene: folder({
+      // Top-level scene aesthetic. Lab = synthwave green grid + atmospherics.
+      // Cozy = warm afternoon sun + god rays + light dust + soft shadows.
+      sceneMode: {
+        value: 'lab',
+        options: ['lab', 'cozy'],
+        label: 'mode',
+      },
+      // Screen color palette — 'auto' picks phosphor for lab, amber for
+      // cozy. Manual options override that.
+      screenPalette: {
+        value: 'auto',
+        options: ['auto', 'phosphor', 'amber', 'mono'],
+        label: 'screen',
+      },
+    }),
     transform: folder({
       scale: { value: 5, min: 0.1, max: 20, step: 0.1 },
       posX: { value: 0, min: -5, max: 5, step: 0.05 },
@@ -80,8 +96,8 @@ export default function Lab() {
       glassClearcoatRoughness: { value: 0.41, min: 0, max: 1, step: 0.01, label: 'cc rough' },
       glassEnvIntensity: { value: 0.4, min: 0, max: 3, step: 0.05, label: 'env mult' },
       envPreset: {
-        value: 'lobby',
-        options: ['studio', 'apartment', 'city', 'sunset', 'warehouse', 'forest', 'lobby', 'park'],
+        value: 'auto',
+        options: ['auto', 'studio', 'apartment', 'city', 'sunset', 'warehouse', 'forest', 'lobby', 'park'],
         label: 'env',
       },
       // Scene-wide IBL controls — affect every PBR material in the scene
@@ -145,8 +161,8 @@ export default function Lab() {
       // after Three.js is done. Preset gives you a starting look, sliders
       // ride on top so you can tweak any preset further.
       filterPreset: {
-        value: 'off',
-        options: ['off', 'warm', 'cool', 'phosphor', 'vhs', 'bleach', 'sepia', 'bw', 'kodachrome'],
+        value: 'auto',
+        options: ['auto', 'off', 'warm', 'cool', 'phosphor', 'vhs', 'bleach', 'sepia', 'bw', 'kodachrome'],
         label: 'preset',
       },
       filterSat: { value: 1, min: 0, max: 2, step: 0.01, label: 'saturate' },
@@ -154,13 +170,20 @@ export default function Lab() {
       filterContrast: { value: 1, min: 0, max: 2, step: 0.01, label: 'contrast' },
       filterBrightness: { value: 1, min: 0, max: 2, step: 0.01, label: 'brightness' },
     }),
-  })
+  }))
+
+  const toggleScene = () =>
+    setT({ sceneMode: t.sceneMode === 'cozy' ? 'lab' : 'cozy' })
 
   const canvasFilter = useMemo(() => {
-    const preset = FILTER_PRESETS[t.filterPreset] ?? ''
+    const presetKey =
+      t.filterPreset === 'auto'
+        ? t.sceneMode === 'cozy' ? 'warm' : 'off'
+        : t.filterPreset
+    const preset = FILTER_PRESETS[presetKey] ?? ''
     const adj = `saturate(${t.filterSat}) hue-rotate(${t.filterHue}deg) contrast(${t.filterContrast}) brightness(${t.filterBrightness})`
     return [preset, adj].filter(Boolean).join(' ')
-  }, [t.filterPreset, t.filterSat, t.filterHue, t.filterContrast, t.filterBrightness])
+  }, [t.filterPreset, t.sceneMode, t.filterSat, t.filterHue, t.filterContrast, t.filterBrightness])
 
   return (
     <>
@@ -172,6 +195,8 @@ export default function Lab() {
         pagePadTop={t.contentTopRem}
         contentScale={t.contentScale}
         audioSrc="/lofi.mp3"
+        sceneMode={t.sceneMode}
+        onToggleScene={toggleScene}
       />
       <CrtScene
         sourceRef={sourceRef}
@@ -179,7 +204,13 @@ export default function Lab() {
         debugMeshes={import.meta.env.DEV}
         freeOrbit
         showLeva={import.meta.env.DEV}
-        labBackground
+        labBackground={t.sceneMode === 'lab'}
+        sceneMode={t.sceneMode}
+        screenPalette={
+          t.screenPalette === 'auto'
+            ? t.sceneMode === 'cozy' ? 'amber' : 'phosphor'
+            : t.screenPalette
+        }
         cameraOverride={{
           // Default zoomed in close on the screen face. Free orbit/zoom still
           // available via mouse.
@@ -221,7 +252,11 @@ export default function Lab() {
         enableGlassMesh={t.glassMesh}
         enableBackOccluder={t.backOccluder}
         glassMode={t.glassMode}
-        envPreset={t.envPreset}
+        envPreset={
+          t.envPreset === 'auto'
+            ? t.sceneMode === 'cozy' ? 'sunset' : 'lobby'
+            : t.envPreset
+        }
         envIntensity={t.envIntensity}
         envRotationY={t.envRotationY}
         envBlur={t.envBlur}

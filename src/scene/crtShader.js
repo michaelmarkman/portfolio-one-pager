@@ -26,6 +26,12 @@ export function createCrtMaterial(texture) {
       // Cursor effect: position in source texture UV (0..1), z = active
       // (1) / off-screen (0). Drives a phosphor halo + soft ripple.
       uCursorUV: { value: new THREE.Vector3(-1, -1, 0) },
+      // Final-stage palette tint. The shader computes its normal RGB
+      // output and then mixes toward `lum * uPaletteColor` by
+      // `uPaletteAmount`. Phosphor mode uses amount=0 (no tint); amber
+      // mode desaturates and shifts to a warm orange CRT look.
+      uPaletteAmount: { value: 0 },
+      uPaletteColor: { value: new THREE.Color(1, 1, 1) },
     },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
@@ -48,6 +54,8 @@ export function createCrtMaterial(texture) {
       uniform float uGlareStrength;
       uniform float uRollSpeed;
       uniform vec3 uCursorUV;
+      uniform float uPaletteAmount;
+      uniform vec3 uPaletteColor;
 
       // Barrel-distort UV around (0.5, 0.5). Positive k bulges outward.
       vec2 barrel(vec2 uv, float k) {
@@ -118,6 +126,14 @@ export function createCrtMaterial(texture) {
         float gp = dot(glareDir, vUv - vec2(0.5));
         float glare = smoothstep(0.05, 0.0, abs(gp - 0.05)) * uGlareStrength;
         col += vec3(0.6, 0.8, 1.0) * glare * 0.18;
+
+        // 9. Palette shift — desaturate to luminance and re-tint with the
+        //    palette color. uPaletteAmount=0 leaves the green phosphor look
+        //    untouched; =1 fully recolors (e.g. amber CRT).
+        if (uPaletteAmount > 0.0) {
+          float plum = dot(col, vec3(0.299, 0.587, 0.114));
+          col = mix(col, plum * uPaletteColor, uPaletteAmount);
+        }
 
         gl_FragColor = vec4(col, 1.0);
       }

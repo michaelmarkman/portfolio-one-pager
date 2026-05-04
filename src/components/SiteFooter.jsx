@@ -1,6 +1,13 @@
 import BackgroundAudio from './BackgroundAudio.jsx'
+import DayNightToggle from './DayNightToggle.jsx'
 
-export default function SiteFooter({ status, links, audioSrc }) {
+export default function SiteFooter({
+  status,
+  links,
+  audioSrc,
+  sceneMode,
+  onToggleScene,
+}) {
   return (
     <footer className="site-footer">
       <nav className="nav">
@@ -17,7 +24,12 @@ export default function SiteFooter({ status, links, audioSrc }) {
             </a>
           ))}
         </div>
-        {audioSrc && <BackgroundAudio src={audioSrc} />}
+        <div className="nav__actions">
+          {audioSrc && <BackgroundAudio src={audioSrc} />}
+          {onToggleScene && (
+            <DayNightToggle mode={sceneMode} onToggle={onToggleScene} />
+          )}
+        </div>
       </nav>
 
       {status && <div className="status-line">{status}</div>}

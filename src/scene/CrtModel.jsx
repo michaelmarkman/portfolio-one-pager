@@ -85,6 +85,7 @@ export default function CrtModel({
   enableGlassMesh = true,
   enableBackOccluder = true,
   glassMode = 'phong', // 'phong' | 'physical'
+  screenPalette = 'phosphor', // 'phosphor' | 'amber' | 'mono'
   onModelReady,
 }) {
   const baseScreenScaleRef = useRef(null)
@@ -178,6 +179,17 @@ export default function CrtModel({
     screenMesh.material = mat
     screenMesh.castShadow = false
     screenMesh.receiveShadow = false
+
+    // Enable shadow casting on every other mesh in the cloned model
+    // (case body, keyboard, etc.) so the cozy mode's directional sun
+    // can throw a real shadow onto the floor. The screen / glass / back
+    // meshes stay opted-out — we don't want shadows landing on the
+    // emissive screen face.
+    cloned.traverse((node) => {
+      if (!node.isMesh) return
+      if (node === screenMesh) return
+      node.castShadow = true
+    })
 
     // Some GLB exports map the screen mesh to a tiny sub-rect of the shared
     // texture atlas (e.g. a 15%×15% corner). Remap the existing UVs so they
@@ -411,6 +423,16 @@ export default function CrtModel({
       u.uScanlineFreq.value = shader.scanlineFreq
       u.uVignetteStrength.value = shader.vignette
       u.uRollSpeed.value = shader.rollSpeed
+      // Sync palette per frame so the leva mode toggle takes effect live.
+      if (screenPalette === 'amber') {
+        u.uPaletteAmount.value = 0.85
+        u.uPaletteColor.value.setRGB(1.5, 0.95, 0.32)
+      } else if (screenPalette === 'mono') {
+        u.uPaletteAmount.value = 0.85
+        u.uPaletteColor.value.setRGB(1.05, 1.05, 1.05)
+      } else {
+        u.uPaletteAmount.value = 0
+      }
     }
     if (glassMatRef.current) {
       const m = glassMatRef.current

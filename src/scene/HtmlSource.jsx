@@ -11,7 +11,7 @@ import SiteFooter from '../components/SiteFooter.jsx'
  * rendered here — they're added per-pixel in the shader on the 3D mesh.
  */
 const HtmlSource = forwardRef(function HtmlSource(
-  { profile, footerLinks, status, variant, pagePadTop, contentScale, audioSrc },
+  { profile, footerLinks, status, variant, pagePadTop, contentScale, audioSrc, sceneMode, onToggleScene },
   ref,
 ) {
   const rootClass = variant ? `html-source html-source--${variant}` : 'html-source'
@@ -25,7 +25,13 @@ const HtmlSource = forwardRef(function HtmlSource(
     <div ref={ref} className={rootClass} aria-hidden="true" style={rootStyle}>
       <div className="html-source__page" style={pageStyle}>
         <Terminal {...profile} />
-        <SiteFooter status={status} links={footerLinks} audioSrc={audioSrc} />
+        <SiteFooter
+          status={status}
+          links={footerLinks}
+          audioSrc={audioSrc}
+          sceneMode={sceneMode}
+          onToggleScene={onToggleScene}
+        />
       </div>
     </div>
   )
