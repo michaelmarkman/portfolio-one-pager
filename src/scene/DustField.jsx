@@ -27,10 +27,32 @@ const PALETTES = {
 /**
  * Volumetric dust drifting upward through the scene. Phosphor-green tint at
  * the front of the box (closest to camera) fading to white at the back.
+ *
+ * When `transitionTRef` is supplied, the palette uniforms (uColorFront,
+ * uColorBack, uOpacity) are lerped each frame between the phosphor and
+ * warm palettes based on the ref's value (0 = phosphor, 1 = warm). Used
+ * by the day/night transition in CrtScene.
  */
-export default function DustField({ palette = 'phosphor' }) {
+export default function DustField({ palette = 'phosphor', transitionTRef }) {
   const pointsRef = useRef()
   const cfg = PALETTES[palette] ?? PALETTES.phosphor
+
+  // Lerp endpoints — pre-built THREE.Color instances reused across frames.
+  const lerpPalettes = useMemo(
+    () => ({
+      phosphor: {
+        front: new THREE.Color(PALETTES.phosphor.front),
+        back: new THREE.Color(PALETTES.phosphor.back),
+        opacity: PALETTES.phosphor.opacity,
+      },
+      warm: {
+        front: new THREE.Color(PALETTES.warm.front),
+        back: new THREE.Color(PALETTES.warm.back),
+        opacity: PALETTES.warm.opacity,
+      },
+    }),
+    [],
+  )
 
   const { geometry, speeds } = useMemo(() => {
     const positions = new Float32Array(COUNT * 3)
@@ -116,6 +138,18 @@ export default function DustField({ palette = 'phosphor' }) {
       }
     }
     points.geometry.attributes.position.needsUpdate = true
+    // Day/night transition — lerp palette uniforms between phosphor and warm.
+    if (transitionTRef && points.material) {
+      const t = transitionTRef.current
+      const u = points.material.uniforms
+      u.uColorFront.value.copy(lerpPalettes.phosphor.front).lerp(lerpPalettes.warm.front, t)
+      u.uColorBack.value.copy(lerpPalettes.phosphor.back).lerp(lerpPalettes.warm.back, t)
+      u.uOpacity.value = THREE.MathUtils.lerp(
+        lerpPalettes.phosphor.opacity,
+        lerpPalettes.warm.opacity,
+        t,
+      )
+    }
   })
 
   return <points ref={pointsRef} geometry={geometry} material={material} frustumCulled={false} />

@@ -287,6 +287,22 @@ a {
   width: 100vw;
   height: 100vh;
   z-index: 3;
+  /* Smoothly tween the canvas color grade alongside the JS-driven scene
+     transition (CrtScene's 1.5s easeOutCubic). Browsers only interpolate
+     filter strings with matching function counts/order — see Lab.jsx
+     FILTER_PRESETS for the canonical 'sepia/saturate/hue-rotate/...'
+     structure used by both 'off' and 'warm' presets. */
+  transition: filter 1.5s cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+/* Cozy/day mode: invert the source DOM so the screen reads light-bg /
+   dark-text. hue-rotate(180deg) restores hues to their original (since
+   invert flips them by 180° in HSL). The CRT shader's amber palette lerp
+   then tints this inverted image into a warm amber-monitor look. The
+   captured texture refresh rate (~8fps) means the transition reads as
+   stepped, which is fine on a CRT face. */
+.html-source--day {
+  filter: invert(1) hue-rotate(180deg);
 }
 
 .phosphor-glow {

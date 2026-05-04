@@ -1,5 +1,4 @@
 import CrtEffects from './components/CrtEffects.jsx'
-import SystemHeader from './components/SystemHeader.jsx'
 import Terminal from './components/Terminal.jsx'
 import SiteFooter from './components/SiteFooter.jsx'
 
@@ -26,8 +25,7 @@ export default function EmbeddedTerminal() {
     <div className="embed-page">
       <CrtEffects />
       <div className="page__inner">
-        <SystemHeader />
-        <Terminal {...PROFILE} />
+        <Terminal {...PROFILE} showSystemLog={false} />
         <SiteFooter status="STATUS: ACTIVE" links={FOOTER_LINKS} />
       </div>
     </div>

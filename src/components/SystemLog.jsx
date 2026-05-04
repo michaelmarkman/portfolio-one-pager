@@ -14,7 +14,7 @@ const TEMPLATES = [
   '[loaded] /work/mega-particle/design-lead (poker_vr.quest)',
   '[loaded] /work/moment/co-founder-ceo (2016—2018, boostvc-tribe10)',
   '[edu] compsci.umass-amherst (2013—2017)',
-  '[edu] product-mgmt.uc-berkeley (2023-11)',
+  '[edu] product-mgmt.uc-berkeley (nov23)',
 ]
 
 function shuffle(arr) {

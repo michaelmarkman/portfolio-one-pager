@@ -3,7 +3,14 @@ import Bio from './Bio.jsx'
 import Prompt from './Prompt.jsx'
 import SystemLog from './SystemLog.jsx'
 
-export default function Terminal({ name, role, location, focus, currentRole }) {
+export default function Terminal({
+  name,
+  role,
+  location,
+  focus,
+  currentRole,
+  showSystemLog = true,
+}) {
   return (
     <main className="terminal">
       <div className="terminal-stack">
@@ -19,7 +26,7 @@ export default function Terminal({ name, role, location, focus, currentRole }) {
 
         <Prompt />
 
-        <SystemLog />
+        {showSystemLog && <SystemLog />}
       </div>
     </main>
   )

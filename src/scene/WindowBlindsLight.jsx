@@ -1,10 +1,15 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
+import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
 /**
  * Fakes "light through window blinds" by laying an additive-blended plane
  * on the floor with vertical stripes. Cheaper and more reliable than a
  * gobo'd spotlight (Three.js core spotLight has no map support).
+ *
+ * When `transitionTRef` is supplied, the material opacity is multiplied by
+ * the ref value each frame so the blinds fade in/out with the day/night
+ * transition.
  */
 export default function WindowBlindsLight({
   position = [-1.5, 0.012, 1.5],
@@ -12,7 +17,13 @@ export default function WindowBlindsLight({
   size = [9, 9],
   color = '#ffe6c0',
   opacity = 0.45,
+  transitionTRef,
 }) {
+  const meshRef = useRef()
+  useFrame(() => {
+    if (!transitionTRef || !meshRef.current) return
+    meshRef.current.material.opacity = opacity * transitionTRef.current
+  })
   const stripeTexture = useMemo(() => {
     const w = 256
     const h = 256
@@ -64,7 +75,7 @@ export default function WindowBlindsLight({
   )
 
   return (
-    <mesh position={position} rotation={rotation} material={material}>
+    <mesh ref={meshRef} position={position} rotation={rotation} material={material}>
       <planeGeometry args={size} />
     </mesh>
   )

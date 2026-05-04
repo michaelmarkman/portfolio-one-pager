@@ -85,7 +85,8 @@ export default function CrtModel({
   enableGlassMesh = true,
   enableBackOccluder = true,
   glassMode = 'phong', // 'phong' | 'physical'
-  screenPalette = 'phosphor', // 'phosphor' | 'amber' | 'mono'
+  screenPalette = 'phosphor', // 'phosphor' | 'amber' | 'mono' | 'auto'
+  transitionTRef, // optional ref for 'auto' mode — lerps phosphor→amber
   onModelReady,
 }) {
   const baseScreenScaleRef = useRef(null)
@@ -424,7 +425,15 @@ export default function CrtModel({
       u.uVignetteStrength.value = shader.vignette
       u.uRollSpeed.value = shader.rollSpeed
       // Sync palette per frame so the leva mode toggle takes effect live.
-      if (screenPalette === 'amber') {
+      // 'auto' lerps phosphor (no palette tint) → amber based on
+      // transitionTRef, used by the day/night crossfade in CrtScene.
+      if (screenPalette === 'auto') {
+        const t = transitionTRef ? transitionTRef.current : 0
+        u.uPaletteAmount.value = THREE.MathUtils.lerp(0, 0.85, t)
+        u.uPaletteColor.value.setRGB(1.5, 0.95, 0.32)
+      } else if (screenPalette === 'amber' || screenPalette === 'amber-inverted') {
+        // Both share the same shader-side amber tint. The DOM-level invert
+        // for 'amber-inverted' is handled by HtmlSource's `screenInvert` prop.
         u.uPaletteAmount.value = 0.85
         u.uPaletteColor.value.setRGB(1.5, 0.95, 0.32)
       } else if (screenPalette === 'mono') {

@@ -20,8 +20,13 @@ const FOOTER_LINKS = [
 // Curated CSS-filter color grades. Preset string is concatenated with the
 // always-on slider adjustments below. Order matters: preset first so user
 // sliders ride on top.
+//
+// 'off' and 'warm' share an identical sepia/saturate/hue-rotate structure
+// so the browser can smoothly interpolate between them when the day/night
+// 'auto' filter switches modes (see CSS .three-stage transition rule).
+// Other presets are manual-pick only — toggling between them snaps.
 const FILTER_PRESETS = {
-  off: '',
+  off: 'sepia(0) saturate(1) hue-rotate(0deg)',
   warm: 'sepia(0.12) saturate(1.05) hue-rotate(-6deg)',
   cool: 'hue-rotate(-12deg) saturate(0.92)',
   phosphor: 'hue-rotate(-8deg) saturate(1.35) contrast(1.08)',
@@ -51,11 +56,13 @@ export default function Lab() {
         options: ['lab', 'cozy'],
         label: 'mode',
       },
-      // Screen color palette — 'auto' picks phosphor for lab, amber for
-      // cozy. Manual options override that.
+      // Screen color palette — 'auto' picks phosphor for lab, amber-inverted
+      // for cozy. Manual options override.
+      // 'amber'           = dark screen, amber phosphor text (classic amber CRT)
+      // 'amber-inverted'  = light amber bg, dark amber text (paper-monitor look)
       screenPalette: {
         value: 'auto',
-        options: ['auto', 'phosphor', 'amber', 'mono'],
+        options: ['auto', 'phosphor', 'amber', 'amber-inverted', 'mono'],
         label: 'screen',
       },
     }),
@@ -175,6 +182,16 @@ export default function Lab() {
   const toggleScene = () =>
     setT({ sceneMode: t.sceneMode === 'cozy' ? 'lab' : 'cozy' })
 
+  // Whether the off-screen DOM should be inverted before capture (light bg,
+  // dark text). Decoupled from sceneMode so manual palettes can opt in.
+  // 'amber-inverted' always inverts; 'auto' inverts when in cozy mode.
+  const screenInvert =
+    t.screenPalette === 'amber-inverted'
+      ? true
+      : t.screenPalette === 'auto'
+        ? t.sceneMode === 'cozy'
+        : false
+
   const canvasFilter = useMemo(() => {
     const presetKey =
       t.filterPreset === 'auto'
@@ -197,6 +214,7 @@ export default function Lab() {
         audioSrc="/lofi.mp3"
         sceneMode={t.sceneMode}
         onToggleScene={toggleScene}
+        screenInvert={screenInvert}
       />
       <CrtScene
         sourceRef={sourceRef}
@@ -206,16 +224,12 @@ export default function Lab() {
         showLeva={import.meta.env.DEV}
         labBackground={t.sceneMode === 'lab'}
         sceneMode={t.sceneMode}
-        screenPalette={
-          t.screenPalette === 'auto'
-            ? t.sceneMode === 'cozy' ? 'amber' : 'phosphor'
-            : t.screenPalette
-        }
+        screenPalette={t.screenPalette}
         cameraOverride={{
           // Default zoomed in close on the screen face. Free orbit/zoom still
           // available via mouse.
-          position: [-0.76, 1.27, 3.20],
-          target: [-0.05, 1.30, 0.36],
+          position: [-0.75, 1.26, 3.20],
+          target: [-0.04, 1.29, 0.36],
           fov: t.fov,
         }}
         mouseParallax={t.mouseParallax}
@@ -252,11 +266,7 @@ export default function Lab() {
         enableGlassMesh={t.glassMesh}
         enableBackOccluder={t.backOccluder}
         glassMode={t.glassMode}
-        envPreset={
-          t.envPreset === 'auto'
-            ? t.sceneMode === 'cozy' ? 'sunset' : 'lobby'
-            : t.envPreset
-        }
+        envPreset={t.envPreset}
         envIntensity={t.envIntensity}
         envRotationY={t.envRotationY}
         envBlur={t.envBlur}

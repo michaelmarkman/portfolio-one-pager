@@ -1,4 +1,5 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
+import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
 /**
@@ -11,6 +12,9 @@ import * as THREE from 'three'
  * orientation (a single shared slant), and the spacing is along Z so
  * the user always sees the stripe pattern at the correct angle from
  * the default camera framing.
+ *
+ * When `transitionTRef` is supplied, every plane's material opacity is
+ * multiplied by the ref value each frame for the day/night fade-in.
  */
 export default function GodRayShafts({
   count = 3,
@@ -24,7 +28,16 @@ export default function GodRayShafts({
   depthSpacing = 0.55,
   color = '#ffe8b8',
   opacity = 0.09,
+  transitionTRef,
 }) {
+  const groupRef = useRef()
+  useFrame(() => {
+    if (!transitionTRef || !groupRef.current) return
+    const t = transitionTRef.current
+    groupRef.current.traverse((node) => {
+      if (node.material) node.material.opacity = opacity * t
+    })
+  })
   const stripeTexture = useMemo(() => {
     const w = 256
     const h = 512
@@ -75,7 +88,7 @@ export default function GodRayShafts({
   )
 
   return (
-    <group>
+    <group ref={groupRef}>
       {planes.map((p) => (
         <mesh key={p.key} position={p.position} rotation={rotation}>
           <planeGeometry args={size} />

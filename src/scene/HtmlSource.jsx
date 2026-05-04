@@ -11,10 +11,27 @@ import SiteFooter from '../components/SiteFooter.jsx'
  * rendered here — they're added per-pixel in the shader on the 3D mesh.
  */
 const HtmlSource = forwardRef(function HtmlSource(
-  { profile, footerLinks, status, variant, pagePadTop, contentScale, audioSrc, sceneMode, onToggleScene },
+  {
+    profile,
+    footerLinks,
+    status,
+    variant,
+    pagePadTop,
+    contentScale,
+    audioSrc,
+    sceneMode,
+    onToggleScene,
+    screenInvert,
+  },
   ref,
 ) {
-  const rootClass = variant ? `html-source html-source--${variant}` : 'html-source'
+  // 'day' modifier inverts the source via CSS filter so the screen reads
+  // light-bg/dark-text. Driven by an explicit `screenInvert` prop when
+  // present (so manual palettes like 'amber-inverted' can opt in regardless
+  // of sceneMode). Falls back to sceneMode==='cozy' for older callers.
+  const isInverted = screenInvert != null ? screenInvert : sceneMode === 'cozy'
+  const baseClass = variant ? `html-source html-source--${variant}` : 'html-source'
+  const rootClass = isInverted ? `${baseClass} html-source--day` : baseClass
   // Optional inline override so leva can move the content up/down on the
   // captured texture without touching CSS.
   const pageStyle = pagePadTop != null ? { paddingTop: `${pagePadTop}rem` } : undefined

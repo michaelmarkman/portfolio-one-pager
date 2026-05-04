@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { ContactShadows, Environment, Grid, OrbitControls, useProgress } from '@react-three/drei'
 import { Leva, useControls, folder } from 'leva'
@@ -89,11 +89,206 @@ const TONE_MAP = {
   Neutral: THREE.NeutralToneMapping,
 }
 
+// Day/night crossfade. transitionTRef is a mutable ref animated each frame
+// from the current value toward `targetT` (0 = lab/non-cozy, 1 = cozy) over
+// TRANSITION_MS with easeOutCubic. Children read the ref directly in their
+// own useFrame to lerp uniforms, opacities, colors etc. — no React state,
+// no re-renders during the 2.5s ramp.
+const TRANSITION_MS = 1500
+const easeOutCubic = (x) => 1 - Math.pow(1 - x, 3)
+
+function TransitionDriver({ targetT, transitionTRef }) {
+  const startTRef = useRef(transitionTRef.current)
+  const startTimeRef = useRef(0)
+  const prevTargetRef = useRef(targetT)
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+    if (prevTargetRef.current !== targetT) {
+      // Restart the ramp from wherever we are now — handles mid-transition
+      // toggles without snapping or backtracking.
+      startTRef.current = transitionTRef.current
+      startTimeRef.current = t
+      prevTargetRef.current = targetT
+    }
+    const elapsed = t - startTimeRef.current
+    const progress = Math.min(elapsed / (TRANSITION_MS / 1000), 1)
+    const eased = easeOutCubic(progress)
+    transitionTRef.current =
+      startTRef.current + (targetT - startTRef.current) * eased
+  })
+  return null
+}
+
+// Day/night fog endpoints. Lab is dense dark green (synthwave); cozy is
+// light warm haze (afternoon). Production has its own constant fog handled
+// outside the transition.
+const FOG_LAB = { color: '#02160c', density: 0.115 }
+const FOG_COZY = { color: '#e8d8c2', density: 0.04 }
+// Background: lab uses the fog color (so the far edges read seamless);
+// cozy is a soft sunset beige.
+const BG_LAB = '#02160c'
+const BG_COZY = '#f4e4cf'
+
+/**
+ * Mutates scene.fog (color + density) each frame based on transitionTRef.
+ * Renders nothing — the fogExp2 instance is JSX-attached to scene.fog
+ * separately. This component just lerps its properties.
+ */
+function FogTransition({ transitionTRef }) {
+  const scene = useThree((s) => s.scene)
+  const labColor = useMemo(() => new THREE.Color(FOG_LAB.color), [])
+  const cozyColor = useMemo(() => new THREE.Color(FOG_COZY.color), [])
+  const tmp = useMemo(() => new THREE.Color(), [])
+  useFrame(() => {
+    if (!scene.fog) return
+    const t = transitionTRef.current
+    tmp.copy(labColor).lerp(cozyColor, t)
+    scene.fog.color.copy(tmp)
+    scene.fog.density = THREE.MathUtils.lerp(FOG_LAB.density, FOG_COZY.density, t)
+  })
+  return null
+}
+
+// ContactShadows endpoints. Lab uses pure black at the model's foot; cozy
+// is a warm sepia, slightly forward (matches the imagined sun direction).
+const SHADOW_LAB = { position: [0, 0.01, 0], opacity: 0.7, color: '#000000' }
+const SHADOW_COZY = { position: [0, 0.01, 1], opacity: 0.45, color: '#3a2a1a' }
+
+/**
+ * Warm wood floor plane that fades in atop the synthwave Grid as t→1.
+ * Reaches full opacity at t=0.5 (first half of the transition) so the grid
+ * underneath is fully covered by the time GridDayHide snaps it off — keeps
+ * the floor seamless without ever showing the grid through cozy mode.
+ * Transparent + depthWrite disabled so the Grid below renders cleanly when
+ * the wood is partially opaque mid-transition.
+ */
+function FloorWoodPlane({ transitionTRef }) {
+  const matRef = useRef()
+  useFrame(() => {
+    if (!matRef.current) return
+    matRef.current.opacity = Math.min(transitionTRef.current * 2, 1)
+  })
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.005, 0]} receiveShadow>
+      <planeGeometry args={[120, 120]} />
+      <meshStandardMaterial
+        ref={matRef}
+        color="#d8c3a5"
+        roughness={0.95}
+        metalness={0}
+        transparent
+        opacity={0}
+        depthWrite={false}
+      />
+    </mesh>
+  )
+}
+
+// Wood floor color — Grid section/cell uniforms lerp toward this in cozy
+// mode so grid lines blend invisibly into the floor.
+const FLOOR_COZY_COLOR = '#d8c3a5'
+
+/**
+ * Lerps drei Grid's cellColor + sectionColor uniforms toward the warm
+ * floor color as transitionTRef → 1, so the grid lines visually disappear
+ * by blending with the wood plane (rather than snapping invisible). Keeps
+ * the lab synthwave colors intact at t=0.
+ */
+function GridDayBlend({
+  transitionTRef,
+  gridRef,
+  labCellColor,
+  labSectionColor,
+}) {
+  const labCell = useMemo(() => new THREE.Color(labCellColor), [labCellColor])
+  const labSec = useMemo(() => new THREE.Color(labSectionColor), [labSectionColor])
+  const floor = useMemo(() => new THREE.Color(FLOOR_COZY_COLOR), [])
+  useFrame(() => {
+    if (!gridRef.current) return
+    const mat = gridRef.current.material
+    if (!mat || !mat.uniforms) return
+    const t = transitionTRef.current
+    // drei's Grid exposes cellColor/sectionColor as Color uniforms (the
+    // names match the prop names; no `u` prefix). Mutate the underlying
+    // Color so we don't trigger material recompiles.
+    const cell = mat.uniforms.cellColor?.value
+    const sec = mat.uniforms.sectionColor?.value
+    if (cell) cell.copy(labCell).lerp(floor, t)
+    if (sec) sec.copy(labSec).lerp(floor, t)
+  })
+  return null
+}
+
+/**
+ * Lerps ContactShadows position.z, material.opacity, and material.color
+ * between lab and cozy endpoints. Single shadow instance so the model
+ * never has two overlapping shadows mid-transition.
+ */
+function CrossfadeContactShadows({ transitionTRef }) {
+  const groupRef = useRef()
+  const labColor = useMemo(() => new THREE.Color(SHADOW_LAB.color), [])
+  const cozyColor = useMemo(() => new THREE.Color(SHADOW_COZY.color), [])
+  useFrame(() => {
+    if (!groupRef.current) return
+    const t = transitionTRef.current
+    groupRef.current.position.set(
+      SHADOW_LAB.position[0],
+      SHADOW_LAB.position[1],
+      THREE.MathUtils.lerp(SHADOW_LAB.position[2], SHADOW_COZY.position[2], t),
+    )
+    groupRef.current.traverse((node) => {
+      const mat = node.material
+      if (!mat) return
+      mat.opacity = THREE.MathUtils.lerp(SHADOW_LAB.opacity, SHADOW_COZY.opacity, t)
+      if (mat.color) mat.color.copy(labColor).lerp(cozyColor, t)
+    })
+  })
+  return (
+    <ContactShadows
+      ref={groupRef}
+      position={SHADOW_LAB.position}
+      scale={6}
+      blur={2.6}
+      far={2}
+      opacity={SHADOW_LAB.opacity}
+      resolution={512}
+      color={SHADOW_LAB.color}
+    />
+  )
+}
+
+/**
+ * Sets scene.background to a shared THREE.Color and lerps it each frame
+ * between BG_LAB and BG_COZY based on transitionTRef. Restores the previous
+ * background on unmount so production page (which never mounts this) keeps
+ * its null/transparent default.
+ */
+function BackgroundTransition({ transitionTRef }) {
+  const scene = useThree((s) => s.scene)
+  const labColor = useMemo(() => new THREE.Color(BG_LAB), [])
+  const cozyColor = useMemo(() => new THREE.Color(BG_COZY), [])
+  const sharedColor = useMemo(() => new THREE.Color(BG_LAB), [])
+  useEffect(() => {
+    const prev = scene.background
+    scene.background = sharedColor
+    return () => {
+      scene.background = prev
+    }
+  }, [scene, sharedColor])
+  useFrame(() => {
+    const t = transitionTRef.current
+    sharedColor.copy(labColor).lerp(cozyColor, t)
+  })
+  return null
+}
+
 /**
  * Drives a flickering intensity on a light (gentle constant flutter + a
  * sharper dip every few seconds). Returns refs/handlers for two light types.
+ * Optional `transitionMul()` callback returns a per-frame multiplier so the
+ * light fades during day/night transitions.
  */
-function useFlicker(seed, baseIntensity, dip = 0.3) {
+function useFlicker(seed, baseIntensity, dip = 0.3, transitionMul) {
   const ref = useRef()
   useFrame((state) => {
     if (!ref.current) return
@@ -103,19 +298,67 @@ function useFlicker(seed, baseIntensity, dip = 0.3) {
     // Slower dip cycle (mean ~10s instead of ~3.5s) so it's a rare event.
     const cycle = (t * 0.1 + seed * 0.5) % 1
     const dipAmt = cycle > 0.97 ? Math.sin(((cycle - 0.97) / 0.03) * Math.PI) * dip : 0
-    ref.current.intensity = baseIntensity * breathe * (1 - dipAmt)
+    const mul = transitionMul ? transitionMul() : 1
+    ref.current.intensity = baseIntensity * breathe * (1 - dipAmt) * mul
   })
   return ref
 }
 
-function FlickerPointLight({ baseIntensity, seed = 0, dip, ...props }) {
-  const ref = useFlicker(seed, baseIntensity, dip)
+function FlickerPointLight({ baseIntensity, seed = 0, dip, transitionMul, ...props }) {
+  const ref = useFlicker(seed, baseIntensity, dip, transitionMul)
   return <pointLight ref={ref} intensity={baseIntensity} {...props} />
 }
 
-function FlickerDirectionalLight({ baseIntensity, seed = 0, dip, ...props }) {
-  const ref = useFlicker(seed, baseIntensity, dip)
+function FlickerDirectionalLight({ baseIntensity, seed = 0, dip, transitionMul, ...props }) {
+  const ref = useFlicker(seed, baseIntensity, dip, transitionMul)
   return <directionalLight ref={ref} intensity={baseIntensity} {...props} />
+}
+
+/**
+ * Per-frame intensity multiplier driven by transitionTRef. side='cozy' fades
+ * IN as t→1 (cozy mode); side='lab' fades OUT (multiplies by 1-t). Used for
+ * lights that crossfade between the two scene modes.
+ */
+function useCrossfadeIntensity(baseIntensity, side, transitionTRef) {
+  const ref = useRef()
+  useFrame(() => {
+    if (!ref.current) return
+    const t = transitionTRef.current
+    const mul = side === 'cozy' ? t : 1 - t
+    ref.current.intensity = baseIntensity * mul
+  })
+  return ref
+}
+
+function CrossfadePointLight({ baseIntensity, side, transitionTRef, ...props }) {
+  const ref = useCrossfadeIntensity(baseIntensity, side, transitionTRef)
+  return <pointLight ref={ref} intensity={0} {...props} />
+}
+
+function CrossfadeHemisphereLight({ baseIntensity, side, transitionTRef, color, groundColor }) {
+  const ref = useCrossfadeIntensity(baseIntensity, side, transitionTRef)
+  return <hemisphereLight ref={ref} intensity={0} color={color} groundColor={groundColor} />
+}
+
+/**
+ * Same crossfade pattern as CrossfadePointLight, but additionally toggles
+ * castShadow off when the multiplier is ~0 — saves a full shadow-map render
+ * per frame when the cozy sun is faded out in lab mode.
+ */
+function CrossfadeDirectionalLight({
+  baseIntensity, side, transitionTRef, castShadow, ...props
+}) {
+  const ref = useRef()
+  useFrame(() => {
+    if (!ref.current) return
+    const t = transitionTRef.current
+    const mul = side === 'cozy' ? t : 1 - t
+    ref.current.intensity = baseIntensity * mul
+    if (castShadow !== undefined) {
+      ref.current.castShadow = castShadow && mul > 0.005
+    }
+  })
+  return <directionalLight ref={ref} intensity={0} castShadow={castShadow} {...props} />
 }
 
 /**
@@ -147,7 +390,7 @@ function IdleSway({ children }) {
  * starting azimuth/polar. Underdamped so it overshoots and settles —
  * gives a "bounce" feel, especially when released at a cage limit.
  */
-function OrbitResetController({ orbitLimits, defaultCam }) {
+function OrbitResetController({ orbitLimits, defaultCam, sceneMode }) {
   const controls = useThree((s) => s.controls)
   const camera = useThree((s) => s.camera)
   const draggingRef = useRef(false)
@@ -155,6 +398,16 @@ function OrbitResetController({ orbitLimits, defaultCam }) {
   const azVelRef = useRef(0)
   const polarVelRef = useRef(0)
   const distVelRef = useRef(0)
+  // On every sceneMode change, kick the camera outward. Velocity 3.8
+  // produces a peak distance around 6 (rest ~3.2 + ~2.8) before the
+  // damped spring (STIFFNESS=4, DAMPING_RATIO=0.85) carries it back —
+  // gives the day/night toggle a "boop out and return" feel.
+  const prevSceneModeRef = useRef(sceneMode)
+  useEffect(() => {
+    if (prevSceneModeRef.current === sceneMode) return
+    prevSceneModeRef.current = sceneMode
+    distVelRef.current = 3.8
+  }, [sceneMode])
 
   // Default azimuth + polar + distance derived from defaultCam position
   // relative to target. The spring rests at these values.
@@ -293,6 +546,54 @@ function CameraIdleBob({ amplitude = 0.015, speed = 0.35 }) {
     camera.position.y += bob
     controls.target.y += bob
     prev.current = bob
+    controls.update()
+  })
+  return null
+}
+
+/**
+ * Trauma-based camera shake on sceneMode change. Translates camera+target
+ * together (lockstep, like MouseParallax) so OrbitControls' spherical
+ * coords stay stable. Shake amplitude = trauma², so it feels punchy and
+ * fades quickly. Strip-and-reapply each frame so it never accumulates.
+ */
+function CameraShake({ sceneMode, intensity = 0.06, duration = 0.45 }) {
+  const camera = useThree((s) => s.camera)
+  const controls = useThree((s) => s.controls)
+  const traumaRef = useRef(0)
+  const offsetRef = useRef(new THREE.Vector3())
+  const tmpDir = useRef(new THREE.Vector3())
+  const tmpRight = useRef(new THREE.Vector3())
+  const tmpUp = useRef(new THREE.Vector3())
+  const prevSceneModeRef = useRef(sceneMode)
+  useEffect(() => {
+    if (prevSceneModeRef.current === sceneMode) return
+    prevSceneModeRef.current = sceneMode
+    traumaRef.current = 1.0
+  }, [sceneMode])
+  useFrame((_, delta) => {
+    if (!controls?.target) return
+    // Strip previous shake from both ends so OrbitControls / spring see
+    // a clean state.
+    camera.position.sub(offsetRef.current)
+    controls.target.sub(offsetRef.current)
+    if (traumaRef.current > 0.001) {
+      camera.getWorldDirection(tmpDir.current)
+      tmpRight.current.crossVectors(tmpDir.current, camera.up).normalize()
+      tmpUp.current.crossVectors(tmpRight.current, tmpDir.current).normalize()
+      const shake = traumaRef.current * traumaRef.current * intensity
+      const rx = (Math.random() * 2 - 1) * shake
+      const ry = (Math.random() * 2 - 1) * shake
+      offsetRef.current
+        .copy(tmpRight.current)
+        .multiplyScalar(rx)
+        .addScaledVector(tmpUp.current, ry)
+      camera.position.add(offsetRef.current)
+      controls.target.add(offsetRef.current)
+      traumaRef.current = Math.max(0, traumaRef.current - delta / duration)
+    } else {
+      offsetRef.current.set(0, 0, 0)
+    }
     controls.update()
   })
   return null
@@ -485,7 +786,7 @@ function LoadingOverlay({ modelReady }) {
   )
 }
 
-function CrtScreen({ sourceRef, modelUrl, debugMeshes, modelTransform, screenForward, remapScreenUV, screenUVRotation, screenUVFlipX, screenUVFlipY, hideMeshes, useHitUv, enableGlassMesh, enableBackOccluder, glassOverride, glassMode, screenPalette, onModelReady }) {
+function CrtScreen({ sourceRef, modelUrl, debugMeshes, modelTransform, screenForward, remapScreenUV, screenUVRotation, screenUVFlipX, screenUVFlipY, hideMeshes, useHitUv, enableGlassMesh, enableBackOccluder, glassOverride, glassMode, screenPalette, transitionTRef, onModelReady }) {
   const { texture } = useHtmlCanvasTexture(sourceRef)
   return (
     <CrtModel
@@ -507,6 +808,7 @@ function CrtScreen({ sourceRef, modelUrl, debugMeshes, modelTransform, screenFor
       enableBackOccluder={enableBackOccluder}
       glassMode={glassMode}
       screenPalette={screenPalette}
+      transitionTRef={transitionTRef}
       onModelReady={onModelReady}
     />
   )
@@ -566,10 +868,35 @@ export default function CrtScene({
     const t = setTimeout(() => setCageWide(false), 3000)
     return () => clearTimeout(t)
   }, [introActive])
+  // Re-widen the cage on every sceneMode change so OrbitResetController's
+  // outward kick has room to swing past the normal max-distance limit
+  // (cozy peak distance ≈ 6 vs the cage's normal max of 4.0). Held wide
+  // for ~3s, matching the spring's settle time.
+  const prevSceneModeRef = useRef(sceneMode)
+  useEffect(() => {
+    if (prevSceneModeRef.current === sceneMode) return
+    prevSceneModeRef.current = sceneMode
+    if (introActive) return
+    setCageWide(true)
+    const t = setTimeout(() => setCageWide(false), 3000)
+    return () => clearTimeout(t)
+  }, [sceneMode, introActive])
 
   // sceneMode wins over the legacy labBackground bool when both passed.
   const isCozy = sceneMode === 'cozy'
   const isLab = !isCozy && labBackground
+  // Lab page (lab OR cozy mode) uses the day/night crossfade. Production
+  // page (sceneMode undefined, labBackground=false) bypasses the transition
+  // entirely and renders its own atmospherics block.
+  const transitionable = isCozy || labBackground
+  // Day/night crossfade signal: 0 = lab/non-cozy, 1 = cozy. Animated each
+  // frame by TransitionDriver (inside Canvas). Child components read the
+  // ref to lerp their uniforms / opacities — no re-renders.
+  const transitionTRef = useRef(isCozy ? 1 : 0)
+  const targetT = isCozy ? 1 : 0
+  // Mesh ref into drei's Grid so GridDayHide can flip its visibility
+  // without re-rendering the whole tree.
+  const gridMeshRef = useRef()
 
   const cam = {
     posX: cameraOverride?.position?.[0] ?? CAMERA.posX,
@@ -645,10 +972,15 @@ export default function CrtScene({
             far: 100,
           }}
         >
+          <TransitionDriver targetT={targetT} transitionTRef={transitionTRef} />
           {glassMode === 'physical' && (
             <Suspense fallback={null}>
               <Environment
-                preset={envPreset}
+                preset={
+                  envPreset === 'auto'
+                    ? isCozy ? 'sunset' : 'lobby'
+                    : envPreset
+                }
                 background={false}
                 environmentIntensity={envIntensity}
                 environmentRotation={[0, envRotationY, 0]}
@@ -683,113 +1015,139 @@ export default function CrtScene({
             seed={4.2}
             dip={0.12}
           />
-          {!isCozy && (
-            <FlickerPointLight
-              position={[0, 0.2, 1.6]}
-              baseIntensity={lights.phosphorIntensity}
-              color={lights.phosphorColor}
-              distance={lights.phosphorDistance}
-              decay={2}
-              seed={0}
-              dip={0.4}
-            />
-          )}
+          <FlickerPointLight
+            position={[0, 0.2, 1.6]}
+            baseIntensity={lights.phosphorIntensity}
+            color={lights.phosphorColor}
+            distance={lights.phosphorDistance}
+            decay={2}
+            seed={0}
+            dip={0.4}
+            transitionMul={() => 1 - transitionTRef.current}
+          />
 
-          {/* Atmospheric fog: lab is dense dark green for synthwave, cozy
-              is light warm haze for afternoon sun, production is neutral. */}
-          {isCozy ? (
+
+          {/* Atmospheric fog. Lab page (transitionable) uses a single
+              fogExp2 mutated each frame by FogTransition between the lab
+              and cozy endpoints. Production has its own constant fog. */}
+          {transitionable ? (
             <>
-              <color attach="background" args={['#f4e4cf']} />
-              <fogExp2 attach="fog" args={['#e8d8c2', 0.04]} />
+              <fogExp2 attach="fog" args={[FOG_LAB.color, FOG_LAB.density]} />
+              <FogTransition transitionTRef={transitionTRef} />
+              <BackgroundTransition transitionTRef={transitionTRef} />
             </>
-          ) : isLab ? (
-            <fogExp2 attach="fog" args={['#02160c', 0.115]} />
           ) : (
             <fogExp2 attach="fog" args={['#171c19', 0.085]} />
           )}
 
-          {isLab && gridOverride?.enabled !== false && (
-            // Lab: muted phosphor-green grid receding into fog. Section
-            // lines stay visible against the dark green fog; cell lines
-            // add a subtle density layer.
-            <Grid
-              position={[0, 0.001, 0]}
-              args={[40, 40]}
-              cellSize={0.5}
-              cellColor={gridOverride?.cellColor ?? '#004522'}
-              cellThickness={0.9}
-              sectionSize={2.5}
-              sectionColor={gridOverride?.sectionColor ?? '#163e21'}
-              sectionThickness={1.8}
-              fadeDistance={22}
-              fadeStrength={1.4}
-              infiniteGrid
-              followCamera={false}
-            />
-          )}
-          {isCozy && (
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
-              <planeGeometry args={[120, 120]} />
-              <meshStandardMaterial color="#d8c3a5" roughness={0.95} metalness={0} />
-            </mesh>
-          )}
-          {!isCozy && !isLab && (
+          {/* Floor: transitionable scenes render the Grid (lab look) and a
+              warm wood plane (cozy look) simultaneously. Wood fades in as
+              t→1, and GridDayBlend lerps grid line colors toward the wood
+              color so distant lines visually disappear in daytime instead
+              of snapping off. Production has its own static floor. */}
+          {transitionable ? (
+            <>
+              {gridOverride?.enabled !== false && (
+                <>
+                  <Grid
+                    ref={gridMeshRef}
+                    position={[0, 0.001, 0]}
+                    args={[40, 40]}
+                    cellSize={0.5}
+                    cellColor={gridOverride?.cellColor ?? '#004522'}
+                    cellThickness={0.9}
+                    sectionSize={2.5}
+                    sectionColor={gridOverride?.sectionColor ?? '#163e21'}
+                    sectionThickness={1.8}
+                    fadeDistance={22}
+                    fadeStrength={1.4}
+                    infiniteGrid
+                    followCamera={false}
+                  />
+                  <GridDayBlend
+                    transitionTRef={transitionTRef}
+                    gridRef={gridMeshRef}
+                    labCellColor={gridOverride?.cellColor ?? '#004522'}
+                    labSectionColor={gridOverride?.sectionColor ?? '#163e21'}
+                  />
+                </>
+              )}
+              <FloorWoodPlane transitionTRef={transitionTRef} />
+            </>
+          ) : (
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
               <planeGeometry args={[120, 120]} />
               <meshStandardMaterial color="#181d1a" roughness={0.92} metalness={0.05} />
             </mesh>
           )}
 
-          {/* Soft contact shadow under the TV — grounds the model. */}
-          <ContactShadows
-            position={[0, 0.01, isLab ? 0 : 1]}
-            scale={6}
-            blur={2.6}
-            far={2}
-            opacity={isLab ? 0.7 : isCozy ? 0.45 : 0.55}
-            resolution={512}
-            color={isCozy ? '#3a2a1a' : '#000000'}
-          />
+          {/* Soft contact shadow under the TV — grounds the model.
+              Transitionable scenes lerp between lab/cozy endpoints; production
+              uses a single static shadow. */}
+          {transitionable ? (
+            <CrossfadeContactShadows transitionTRef={transitionTRef} />
+          ) : (
+            <ContactShadows
+              position={[0, 0.01, 1]}
+              scale={6}
+              blur={2.6}
+              far={2}
+              opacity={0.55}
+              resolution={512}
+              color="#000000"
+            />
+          )}
 
-          {/* Lab atmospherics: a big phosphor-green halo behind the model
-              + a warm rim from the side for a hint of color separation +
-              the dust motes from production for that volumetric grit. */}
-          {isLab && (
+          {/* Lab + cozy atmospherics rendered simultaneously and crossfaded
+              via transitionTRef. Lights below use side='lab' (multiply by
+              1-t) or side='cozy' (multiply by t). Atmospheric props
+              (DustField, WindowBlindsLight, GodRayShafts) still gated by
+              the active mode for now — they get their own crossfade in
+              later tasks. */}
+          {transitionable && (
             <>
-              <pointLight
+              {/* Lab atmospherics: phosphor halo, warm rim, dim green fill */}
+              <CrossfadePointLight
+                side="lab"
+                transitionTRef={transitionTRef}
                 position={[0, 2.0, -2.0]}
                 color="#3fff8a"
-                intensity={5.5}
+                baseIntensity={5.5}
                 distance={18}
                 decay={1.5}
               />
-              <pointLight
+              <CrossfadePointLight
+                side="lab"
+                transitionTRef={transitionTRef}
                 position={[3.5, 1.8, -1.0]}
                 color="#5cffd0"
-                intensity={1.6}
+                baseIntensity={1.6}
                 distance={10}
                 decay={1.8}
               />
-              <pointLight
+              <CrossfadePointLight
+                side="lab"
+                transitionTRef={transitionTRef}
                 position={[-3.5, 0.8, 1.0]}
                 color="#1a8a4a"
-                intensity={1.2}
+                baseIntensity={1.2}
                 distance={8}
                 decay={1.8}
               />
-              <DustField />
-            </>
-          )}
-
-          {/* Cozy daytime: warm directional sun w/ real-time shadows,
-              hemisphere fill for natural sky/ground tinting, blinds on
-              the floor + slanted god-ray shafts above, warm dust motes. */}
-          {isCozy && (
-            <>
-              <hemisphereLight args={['#cfe6ff', '#caa37a', 0.55]} />
-              <directionalLight
+              {/* Cozy daytime: hemisphere sky/ground fill + warm directional
+                  sun (real-time shadows, gated off when faded out). */}
+              <CrossfadeHemisphereLight
+                side="cozy"
+                transitionTRef={transitionTRef}
+                color="#cfe6ff"
+                groundColor="#caa37a"
+                baseIntensity={0.55}
+              />
+              <CrossfadeDirectionalLight
+                side="cozy"
+                transitionTRef={transitionTRef}
                 position={[6, 5, 4]}
-                intensity={1.6}
+                baseIntensity={1.6}
                 color="#ffd9a3"
                 castShadow
                 shadow-mapSize-width={2048}
@@ -803,13 +1161,18 @@ export default function CrtScene({
                 shadow-camera-top={6}
                 shadow-camera-bottom={-6}
               />
-              <WindowBlindsLight />
-              <GodRayShafts />
-              <DustField palette="warm" />
+              {/* Single dust field that lerps its palette uniforms between
+                  phosphor (lab) and warm (cozy) via transitionTRef. */}
+              <DustField transitionTRef={transitionTRef} />
+              {/* Blinds + god-rays render always; their material opacity
+                  is multiplied by transitionTRef so they fade in with t. */}
+              <WindowBlindsLight transitionTRef={transitionTRef} />
+              <GodRayShafts transitionTRef={transitionTRef} />
             </>
           )}
 
-          {/* Production-only warm spotlight + window blinds + dust. */}
+          {/* Production-only warm spotlight + window blinds + dust.
+              Production never transitions, so this block stays static. */}
           {!isLab && !isCozy && (
             <>
               <spotLight
@@ -829,10 +1192,10 @@ export default function CrtScene({
 
           <Suspense fallback={null}>
             {freeOrbit ? (
-              <CrtScreen sourceRef={sourceRef} modelUrl={modelUrl} debugMeshes={debugMeshes} modelTransform={modelTransform} screenForward={screenForward} remapScreenUV={remapScreenUV} screenUVRotation={screenUVRotation} screenUVFlipX={screenUVFlipX} screenUVFlipY={screenUVFlipY} hideMeshes={hideMeshes} useHitUv={useHitUv} enableGlassMesh={enableGlassMesh} enableBackOccluder={enableBackOccluder} glassOverride={glassOverride} glassMode={glassMode} screenPalette={screenPalette} onModelReady={handleModelReady} />
+              <CrtScreen sourceRef={sourceRef} modelUrl={modelUrl} debugMeshes={debugMeshes} modelTransform={modelTransform} screenForward={screenForward} remapScreenUV={remapScreenUV} screenUVRotation={screenUVRotation} screenUVFlipX={screenUVFlipX} screenUVFlipY={screenUVFlipY} hideMeshes={hideMeshes} useHitUv={useHitUv} enableGlassMesh={enableGlassMesh} enableBackOccluder={enableBackOccluder} glassOverride={glassOverride} glassMode={glassMode} screenPalette={screenPalette} transitionTRef={transitionTRef} onModelReady={handleModelReady} />
             ) : (
               <IdleSway>
-                <CrtScreen sourceRef={sourceRef} modelUrl={modelUrl} debugMeshes={debugMeshes} modelTransform={modelTransform} screenForward={screenForward} remapScreenUV={remapScreenUV} screenUVRotation={screenUVRotation} screenUVFlipX={screenUVFlipX} screenUVFlipY={screenUVFlipY} hideMeshes={hideMeshes} useHitUv={useHitUv} enableGlassMesh={enableGlassMesh} enableBackOccluder={enableBackOccluder} glassOverride={glassOverride} glassMode={glassMode} screenPalette={screenPalette} onModelReady={handleModelReady} />
+                <CrtScreen sourceRef={sourceRef} modelUrl={modelUrl} debugMeshes={debugMeshes} modelTransform={modelTransform} screenForward={screenForward} remapScreenUV={remapScreenUV} screenUVRotation={screenUVRotation} screenUVFlipX={screenUVFlipX} screenUVFlipY={screenUVFlipY} hideMeshes={hideMeshes} useHitUv={useHitUv} enableGlassMesh={enableGlassMesh} enableBackOccluder={enableBackOccluder} glassOverride={glassOverride} glassMode={glassMode} screenPalette={screenPalette} transitionTRef={transitionTRef} onModelReady={handleModelReady} />
               </IdleSway>
             )}
           </Suspense>
@@ -863,7 +1226,7 @@ export default function CrtScene({
                 minDistance={(cageWide || unlockCage) ? 0.1 : FREE_ORBIT_LIMITS.minDistance}
                 maxDistance={(cageWide || unlockCage) ? 50 : FREE_ORBIT_LIMITS.maxDistance}
               />
-              {!introActive && !pauseReturn && <OrbitResetController orbitLimits={FREE_ORBIT_LIMITS} defaultCam={cam} />}
+              {!introActive && !pauseReturn && <OrbitResetController orbitLimits={FREE_ORBIT_LIMITS} defaultCam={cam} sceneMode={sceneMode} />}
               {introActive && (
                 <CameraIntro
                   introCam={INTRO_CAM}
@@ -895,6 +1258,7 @@ export default function CrtScene({
           {onCameraChange && <CameraSpy onChange={onCameraChange} />}
           {cameraOverride?.fov != null && <CameraFovSync fov={cameraOverride.fov} />}
           {!introActive && mouseParallax > 0 && <MouseParallax strength={mouseParallax} />}
+          {!introActive && transitionable && <CameraShake sceneMode={sceneMode} />}
           {!introActive && idleBob > 0 && <CameraIdleBob amplitude={idleBob} speed={idleBobSpeed} />}
           {tone?.mode && (
             <ToneMappingSync
