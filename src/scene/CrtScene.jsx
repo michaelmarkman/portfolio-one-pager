@@ -57,12 +57,26 @@ const ORBIT_LIMITS = {
 // Free-orbit cage for the lab/production page — wider than ORBIT_LIMITS
 // since the lab framing sits at azimuth ~-15° and we want some swing room.
 // Polar is kept near horizontal so users can't tilt straight up/down.
+// Distance bounds the dolly so users can't scroll into the model or fly
+// off into the fog. Default cam sits at ~3.32 units from target.
 const FREE_ORBIT_LIMITS = {
   minAz: -Math.PI * 0.20,    // ~-36°
   maxAz: Math.PI * 0.04,     // ~+7°
   minPolar: Math.PI * 0.38,  // ~68°
   maxPolar: Math.PI * 0.55,  // ~99°
+  minDistance: 1.0,
+  maxDistance: 4.0,
 }
+
+// Where the camera starts on first load — full side profile of the PC,
+// ~12 units out at azimuth -90°. CameraIntro snaps here, then springs to
+// the rest framing once the model finishes loading.
+const INTRO_CAM = {
+  posX: -12.25,
+  posY: 1.13,
+  posZ: 0.37,
+}
+const INTRO_HOLD = 0 // seconds pinned at INTRO_CAM before the spring releases
 
 const TONE_MAP = {
   None: THREE.NoToneMapping,
@@ -134,17 +148,21 @@ function IdleSway({ children }) {
  */
 function OrbitResetController({ orbitLimits, defaultCam }) {
   const controls = useThree((s) => s.controls)
+  const camera = useThree((s) => s.camera)
   const draggingRef = useRef(false)
+  const wheelEndTimerRef = useRef(null)
   const azVelRef = useRef(0)
   const polarVelRef = useRef(0)
+  const distVelRef = useRef(0)
 
-  // Default azimuth + polar derived from defaultCam position relative to target.
+  // Default azimuth + polar + distance derived from defaultCam position
+  // relative to target. The spring rests at these values.
   const dx = defaultCam.posX - defaultCam.targetX
   const dy = defaultCam.posY - defaultCam.targetY
   const dz = defaultCam.posZ - defaultCam.targetZ
-  const distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
+  const targetDistance = Math.sqrt(dx * dx + dy * dy + dz * dz)
   const targetAzimuth = Math.atan2(dx, dz)
-  const targetPolar = Math.acos(dy / distance)
+  const targetPolar = Math.acos(dy / targetDistance)
 
   // Spring tuning — softer + more damped than a typical spring. Lower
   // stiffness means a slower return; higher damping ratio means it
@@ -157,58 +175,125 @@ function OrbitResetController({ orbitLimits, defaultCam }) {
   // at it — sells the "tug at the wall" rubber-band feel before springing
   // back through the default.
   const EDGE_EPS = 0.005
-  const REBOUND_KICK = 1.0 // rad/sec impulse magnitude
+  const REBOUND_KICK = 1.0 // rad/sec impulse magnitude (rotation)
+  const DIST_REBOUND_KICK = 2.0 // world-units/sec impulse magnitude (zoom)
 
   useEffect(() => {
     if (!controls) return
     const onStart = () => {
+      // Cancel any pending debounce — a new gesture means the previous
+      // 'end' shouldn't fire its delayed callback.
+      if (wheelEndTimerRef.current) {
+        clearTimeout(wheelEndTimerRef.current)
+        wheelEndTimerRef.current = null
+      }
       draggingRef.current = true
       azVelRef.current = 0
       polarVelRef.current = 0
+      distVelRef.current = 0
     }
     const onEnd = () => {
-      draggingRef.current = false
-      // Apply a spring-back kick if the drag ended at an azimuth/polar limit.
-      const az = controls.getAzimuthalAngle()
-      const polar = controls.getPolarAngle()
-      if (Math.abs(az - orbitLimits.minAz) < EDGE_EPS) azVelRef.current = REBOUND_KICK
-      else if (Math.abs(az - orbitLimits.maxAz) < EDGE_EPS) azVelRef.current = -REBOUND_KICK
-      if (Math.abs(polar - orbitLimits.minPolar) < EDGE_EPS) polarVelRef.current = REBOUND_KICK
-      else if (Math.abs(polar - orbitLimits.maxPolar) < EDGE_EPS) polarVelRef.current = -REBOUND_KICK
+      // OrbitControls fires start+end synchronously per wheel event, and
+      // Apple trackpads keep emitting wheel events for ~hundreds of ms
+      // after the fingers leave. Without a debounce the spring fires
+      // between every inertial tick and gets immediately cancelled. Wait
+      // for a quiet period before releasing draggingRef.
+      if (wheelEndTimerRef.current) clearTimeout(wheelEndTimerRef.current)
+      wheelEndTimerRef.current = setTimeout(() => {
+        wheelEndTimerRef.current = null
+        draggingRef.current = false
+        // Apply a spring-back kick if we settled at a cage limit.
+        const az = controls.getAzimuthalAngle()
+        const polar = controls.getPolarAngle()
+        const dist = camera.position.distanceTo(controls.target)
+        if (Math.abs(az - orbitLimits.minAz) < EDGE_EPS) azVelRef.current = REBOUND_KICK
+        else if (Math.abs(az - orbitLimits.maxAz) < EDGE_EPS) azVelRef.current = -REBOUND_KICK
+        if (Math.abs(polar - orbitLimits.minPolar) < EDGE_EPS) polarVelRef.current = REBOUND_KICK
+        else if (Math.abs(polar - orbitLimits.maxPolar) < EDGE_EPS) polarVelRef.current = -REBOUND_KICK
+        if (orbitLimits.minDistance != null && Math.abs(dist - orbitLimits.minDistance) < EDGE_EPS * 4) {
+          distVelRef.current = DIST_REBOUND_KICK
+        } else if (orbitLimits.maxDistance != null && Math.abs(dist - orbitLimits.maxDistance) < EDGE_EPS * 4) {
+          distVelRef.current = -DIST_REBOUND_KICK
+        }
+      }, 140)
     }
     controls.addEventListener('start', onStart)
     controls.addEventListener('end', onEnd)
     return () => {
       controls.removeEventListener('start', onStart)
       controls.removeEventListener('end', onEnd)
+      if (wheelEndTimerRef.current) {
+        clearTimeout(wheelEndTimerRef.current)
+        wheelEndTimerRef.current = null
+      }
     }
-  }, [controls, orbitLimits])
+  }, [controls, camera, orbitLimits])
 
   useFrame((_, delta) => {
     if (!controls || draggingRef.current) return
     if (typeof controls.getAzimuthalAngle !== 'function') return
     const currentAz = controls.getAzimuthalAngle()
     const currentPolar = controls.getPolarAngle()
-    // Bail when settled (both pos and velocity quiet).
+    const currentDist = camera.position.distanceTo(controls.target)
+    // Bail when all three components are settled.
     const azDelta = targetAzimuth - currentAz
     const polarDelta = targetPolar - currentPolar
+    const distDelta = targetDistance - currentDist
     if (
       Math.abs(azDelta) < 1e-4 && Math.abs(azVelRef.current) < 1e-4 &&
-      Math.abs(polarDelta) < 1e-4 && Math.abs(polarVelRef.current) < 1e-4
+      Math.abs(polarDelta) < 1e-4 && Math.abs(polarVelRef.current) < 1e-4 &&
+      Math.abs(distDelta) < 1e-3 && Math.abs(distVelRef.current) < 1e-3
     ) {
       azVelRef.current = 0
       polarVelRef.current = 0
+      distVelRef.current = 0
       return
     }
     // Spring-damper integration (semi-implicit Euler).
     const azAccel = STIFFNESS * azDelta - dampingCoef * azVelRef.current
     const polarAccel = STIFFNESS * polarDelta - dampingCoef * polarVelRef.current
+    const distAccel = STIFFNESS * distDelta - dampingCoef * distVelRef.current
     azVelRef.current += azAccel * delta
     polarVelRef.current += polarAccel * delta
+    distVelRef.current += distAccel * delta
     controls.setAzimuthalAngle(currentAz + azVelRef.current * delta)
     controls.setPolarAngle(currentPolar + polarVelRef.current * delta)
+    // Distance: scale the camera's offset from target to the new radius.
+    const newDist = currentDist + distVelRef.current * delta
+    if (Math.abs(newDist - currentDist) > 1e-5) {
+      const dir = camera.position.clone().sub(controls.target).normalize()
+      camera.position.copy(controls.target).addScaledVector(dir, newDist)
+      controls.update()
+    }
   })
 
+  return null
+}
+
+/**
+ * Idle camera bob — slow vertical sine-wave offset applied equally to
+ * camera AND orbit target, so the look direction stays fixed (a pure
+ * translation, like a drone hover). Same un-apply / re-apply pattern
+ * as MouseParallax so it composes cleanly without fighting OrbitControls
+ * or the spring (relative camera→target offset is preserved).
+ */
+function CameraIdleBob({ amplitude = 0.015, speed = 0.35 }) {
+  const camera = useThree((s) => s.camera)
+  const controls = useThree((s) => s.controls)
+  const prev = useRef(0)
+
+  useFrame((state) => {
+    if (!controls?.target) return
+    // Strip previous bob from both ends
+    camera.position.y -= prev.current
+    controls.target.y -= prev.current
+    // New offset
+    const bob = Math.sin(state.clock.elapsedTime * speed * Math.PI * 2) * amplitude
+    camera.position.y += bob
+    controls.target.y += bob
+    prev.current = bob
+    controls.update()
+  })
   return null
 }
 
@@ -255,6 +340,45 @@ function MouseParallax({ strength = 0.08, lerpAmt = 0.025 }) {
     camera.position.add(prev.current)
     controls.update()
   })
+  return null
+}
+
+/**
+ * Intro: snap the camera to INTRO_CAM, hold there for `hold` seconds,
+ * then fire onComplete. The spring-back is run by OrbitResetController
+ * (which mounts as soon as the intro ends) so the user can interact +
+ * parallax + bob start immediately while the spring continues quietly
+ * in the background.
+ */
+function CameraIntro({ introCam, hold, modelReady, onComplete }) {
+  const camera = useThree((s) => s.camera)
+  const controls = useThree((s) => s.controls)
+  const phaseRef = useRef('init') // init → hold → done
+  const readyAtRef = useRef(0)
+
+  useFrame((state) => {
+    if (phaseRef.current === 'done') return
+    if (!modelReady) return
+
+    if (phaseRef.current === 'init') {
+      readyAtRef.current = state.clock.elapsedTime
+      camera.position.set(introCam.posX, introCam.posY, introCam.posZ)
+      if (controls) controls.update()
+      phaseRef.current = 'hold'
+      return
+    }
+
+    // Pin to introCam during hold so OrbitControls' own update doesn't
+    // drift it back toward the spherical-derived position.
+    camera.position.set(introCam.posX, introCam.posY, introCam.posZ)
+    if (controls) controls.update()
+
+    if (state.clock.elapsedTime - readyAtRef.current >= hold) {
+      phaseRef.current = 'done'
+      onComplete?.()
+    }
+  })
+
   return null
 }
 
@@ -410,16 +534,34 @@ export default function CrtScene({
   labBackground = false,
   showLeva = false,
   mouseParallax = 0,
+  idleBob = 0,
+  idleBobSpeed = 0.35,
   tone,
   canvasFilter,
   gridOverride,
   enableZoom = false,
   enablePan = false,
+  unlockCage = false,
+  pauseReturn = false,
   cameraOverride,
   onCameraChange,
 }) {
   const [modelReady, setModelReady] = useState(false)
   const handleModelReady = useCallback(() => setModelReady(true), [])
+  // introActive covers JUST the hold phase. After hold, OrbitControls
+  // becomes interactable, parallax/bob/spring all mount, and the spring
+  // runs the actual fly-in.
+  const [introActive, setIntroActive] = useState(true)
+  const handleIntroDone = useCallback(() => setIntroActive(false), [])
+  // cageWide stays true through the whole intro AND for a few seconds
+  // after, so the spring can travel the long distance from INTRO_CAM
+  // back to the rest framing without OrbitControls clamping mid-flight.
+  const [cageWide, setCageWide] = useState(true)
+  useEffect(() => {
+    if (introActive) return
+    const t = setTimeout(() => setCageWide(false), 3000)
+    return () => clearTimeout(t)
+  }, [introActive])
 
   const cam = {
     posX: cameraOverride?.position?.[0] ?? CAMERA.posX,
@@ -483,6 +625,11 @@ export default function CrtScene({
           dpr={[1, 3]}
           gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
           camera={{
+            // Keep the rest position as the initial camera so CrtModel's
+            // setup useEffect (which picks the screen's forward axis from
+            // the current camera direction) computes the right axis. The
+            // intro snaps the camera to INTRO_CAM only AFTER modelReady,
+            // by which point setup has already run.
             position: [cam.posX, cam.posY, cam.posZ],
             fov: cam.fov,
             near: 0.1,
@@ -644,20 +791,37 @@ export default function CrtScene({
             <>
               <OrbitControls
                 makeDefault
+                enabled={!introActive}
                 enableZoom={enableZoom}
                 enablePan={enablePan}
                 enableDamping
-                dampingFactor={0.12}
-                zoomSpeed={0.4}
+                // Higher dampingFactor + lower zoomSpeed = silky inertial
+                // wheel zoom that decays slowly instead of snapping.
+                dampingFactor={0.18}
+                zoomSpeed={0.05}
                 panSpeed={0.6}
                 rotateSpeed={0.7}
                 target={[cam.targetX, cam.targetY, cam.targetZ]}
-                minAzimuthAngle={FREE_ORBIT_LIMITS.minAz}
-                maxAzimuthAngle={FREE_ORBIT_LIMITS.maxAz}
-                minPolarAngle={FREE_ORBIT_LIMITS.minPolar}
-                maxPolarAngle={FREE_ORBIT_LIMITS.maxPolar}
+                // While the cage is wide (intro hold + spring-back travel
+                // window) or the user has toggled 'unlock cage' in leva,
+                // remove all clamps so the spring can swing the camera
+                // through the full INTRO_CAM → rest distance.
+                minAzimuthAngle={(cageWide || unlockCage) ? -Math.PI : FREE_ORBIT_LIMITS.minAz}
+                maxAzimuthAngle={(cageWide || unlockCage) ? Math.PI : FREE_ORBIT_LIMITS.maxAz}
+                minPolarAngle={(cageWide || unlockCage) ? 0.01 : FREE_ORBIT_LIMITS.minPolar}
+                maxPolarAngle={(cageWide || unlockCage) ? Math.PI - 0.01 : FREE_ORBIT_LIMITS.maxPolar}
+                minDistance={(cageWide || unlockCage) ? 0.1 : FREE_ORBIT_LIMITS.minDistance}
+                maxDistance={(cageWide || unlockCage) ? 50 : FREE_ORBIT_LIMITS.maxDistance}
               />
-              <OrbitResetController orbitLimits={FREE_ORBIT_LIMITS} defaultCam={cam} />
+              {!introActive && !pauseReturn && <OrbitResetController orbitLimits={FREE_ORBIT_LIMITS} defaultCam={cam} />}
+              {introActive && (
+                <CameraIntro
+                  introCam={INTRO_CAM}
+                  hold={INTRO_HOLD}
+                  modelReady={modelReady}
+                  onComplete={handleIntroDone}
+                />
+              )}
             </>
           ) : (
             <>
@@ -680,7 +844,8 @@ export default function CrtScene({
           )}
           {onCameraChange && <CameraSpy onChange={onCameraChange} />}
           {cameraOverride?.fov != null && <CameraFovSync fov={cameraOverride.fov} />}
-          {mouseParallax > 0 && <MouseParallax strength={mouseParallax} />}
+          {!introActive && mouseParallax > 0 && <MouseParallax strength={mouseParallax} />}
+          {!introActive && idleBob > 0 && <CameraIdleBob amplitude={idleBob} speed={idleBobSpeed} />}
           {tone?.mode && (
             <ToneMappingSync
               mode={TONE_MAP[tone.mode] ?? THREE.ACESFilmicToneMapping}

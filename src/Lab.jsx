@@ -105,9 +105,20 @@ export default function Lab() {
       // World-units the orbit-target shifts toward where the mouse is.
       // 0 disables parallax. ~0.05-0.15 reads as a subtle living shot.
       mouseParallax: { value: 0.03, min: 0, max: 0.4, step: 0.01, label: 'parallax' },
-      // Production-locked by default — flip on for unrestricted exploration.
-      enableZoom: { value: false, label: 'zoom unlock' },
+      // Slow vertical sine-wave bob — both camera and target translate
+      // together so the framing stays locked. 0 disables.
+      idleBob: { value: 0.006, min: 0, max: 0.05, step: 0.0005, label: 'idle bob' },
+      idleBobSpeed: { value: 0.35, min: 0.05, max: 1.5, step: 0.05, label: 'bob speed' },
+      // Zoom on by default (caged + spring-back); pan stays off so the
+      // framing target can't wander away from the PC.
+      enableZoom: { value: true, label: 'zoom' },
       enablePan: { value: false, label: 'pan unlock' },
+      // Free-roam mode for finding new framings. unlockCage widens all
+      // rotation + distance limits so you can orbit anywhere; pauseReturn
+      // disables the spring-back so the camera holds wherever you release.
+      // Use both, then read the HUD values for a baked INTRO_CAM.
+      unlockCage: { value: false, label: 'unlock cage' },
+      pauseReturn: { value: false, label: 'pause return' },
     }),
     grade: folder({
       // Renderer tone-mapping enum + exposure. ACESFilmic is R3F's default
@@ -160,6 +171,7 @@ export default function Lab() {
         variant="lab"
         pagePadTop={t.contentTopRem}
         contentScale={t.contentScale}
+        audioSrc="/lofi.mp3"
       />
       <CrtScene
         sourceRef={sourceRef}
@@ -176,8 +188,12 @@ export default function Lab() {
           fov: t.fov,
         }}
         mouseParallax={t.mouseParallax}
+        idleBob={t.idleBob}
+        idleBobSpeed={t.idleBobSpeed}
         enableZoom={t.enableZoom}
         enablePan={t.enablePan}
+        unlockCage={t.unlockCage}
+        pauseReturn={t.pauseReturn}
         tone={useMemo(
           () => ({ mode: t.toneMode, exposure: t.toneExposure }),
           [t.toneMode, t.toneExposure],

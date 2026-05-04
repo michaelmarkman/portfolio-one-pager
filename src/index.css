@@ -597,3 +597,30 @@ a {
   font-size: 13px;
   opacity: 0.75;
 }
+
+/* Mute toggle — lives inside the off-screen html-source, positioned at
+   the top-right of the rasterized page so it appears in that corner of
+   the CRT screen texture. Click events are routed from the 3D screen
+   surface to this element via useScreenInteraction. */
+.audio-toggle {
+  position: absolute;
+  /* Vertically aligned with the TWITTER/LINKEDIN/EMAIL footer links. */
+  bottom: 7rem;
+  right: 4.5rem;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: #3fff8a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 5;
+  -webkit-tap-highlight-color: transparent;
+}
+.audio-toggle:hover {
+  opacity: 0.7;
+}
+.audio-toggle:focus {
+  outline: none;
+}

@@ -2,6 +2,7 @@ import { forwardRef } from 'react'
 import SystemHeader from '../components/SystemHeader.jsx'
 import Terminal from '../components/Terminal.jsx'
 import SiteFooter from '../components/SiteFooter.jsx'
+import BackgroundAudio from '../components/BackgroundAudio.jsx'
 
 /**
  * Off-screen 1024×768 DOM hosting the live terminal — the source for
@@ -12,7 +13,7 @@ import SiteFooter from '../components/SiteFooter.jsx'
  * rendered here — they're added per-pixel in the shader on the 3D mesh.
  */
 const HtmlSource = forwardRef(function HtmlSource(
-  { profile, footerLinks, status, variant, pagePadTop, contentScale },
+  { profile, footerLinks, status, variant, pagePadTop, contentScale, audioSrc },
   ref,
 ) {
   const rootClass = variant ? `html-source html-source--${variant}` : 'html-source'
@@ -29,6 +30,7 @@ const HtmlSource = forwardRef(function HtmlSource(
         <Terminal {...profile} />
         <SiteFooter status={status} links={footerLinks} />
       </div>
+      {audioSrc && <BackgroundAudio src={audioSrc} />}
     </div>
   )
 })
