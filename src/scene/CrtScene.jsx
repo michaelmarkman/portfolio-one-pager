@@ -75,6 +75,10 @@ const FREE_ORBIT_LIMITS = {
   minDistance: 0.7,
   maxDistance: 7,
 }
+// Wide cage — used during the intro spring window and the leva
+// 'unlock cage' free-roam mode. Same numbers in OrbitControls' JSX
+// and inside ZoomController so they can't drift apart.
+const CAGE_WIDE_DIST = { min: 0.1, max: 50 }
 // Damping ramp + stiffness per axis. The polar high-end (under-floor
 // territory) uses a much higher stiffness so the asymptote drops to
 // near-zero throughput within a few degrees past soft — practically a
@@ -466,56 +470,169 @@ function ElasticOrbitLimits({ soft, ramp }) {
 }
 
 /**
+ * Owns wheel-based zoom (dolly). Three.js OrbitControls integrates its
+ * `_scale` against `spherical.radius` once per frame and resets — no
+ * cross-frame smoothing. We disable OrbitControls' zoom and run our
+ * own target-tracking integrator instead: each wheel tick updates a
+ * target distance, and each frame the camera's actual distance
+ * exp-lerps toward that target. Frame-rate independent, so trackpad
+ * (~250–500 Hz) and mouse-wheel (~30 Hz) inputs both glide.
+ *
+ * After ~180 ms of wheel idle, a gentle pull starts dragging the
+ * target back toward the default camera distance — replaces the
+ * spring-on-distance leg of OrbitResetController. Hard-clamp on the
+ * target gives the "min/max wall + drift back to default" feel
+ * without any elastic-while-pushing.
+ */
+function ZoomController({ defaultCam, sceneMode, cageWide, unlockCage, pauseReturn }) {
+  const controls = useThree((s) => s.controls)
+  const camera = useThree((s) => s.camera)
+  const gl = useThree((s) => s.gl)
+
+  // Default distance the rest pull wants to settle on. Computed once
+  // from defaultCam — same calc OrbitResetController used.
+  const dx = defaultCam.posX - defaultCam.targetX
+  const dy = defaultCam.posY - defaultCam.targetY
+  const dz = defaultCam.posZ - defaultCam.targetZ
+  const defaultDistance = Math.sqrt(dx * dx + dy * dy + dz * dz)
+
+  const targetDistanceRef = useRef(defaultDistance)
+  const activityRef = useRef(0)
+  const initRef = useRef(false)
+  const prevSceneModeRef = useRef(sceneMode)
+
+  const SMOOTHING_RATE = 9        // 1/s — gap to target halves every ~77 ms
+  const RETURN_RATE = 2.0         // 1/s — comparable to rotation spring's ω_d
+  const ACTIVITY_DECAY_SEC = 0.18 // ~180 ms idle before rest pull engages
+  const ZOOM_PER_PIXEL = 0.0015   // wheel sensitivity, trackpad-friendly
+  const BOOP_AMOUNT = 2.8         // sceneMode-toggle target offset
+
+  // Bounds depend on which cage is active. Wide during intro / unlock,
+  // soft (FREE_ORBIT_LIMITS) the rest of the time.
+  const minDist = (cageWide || unlockCage) ? CAGE_WIDE_DIST.min : FREE_ORBIT_LIMITS.minDistance
+  const maxDist = (cageWide || unlockCage) ? CAGE_WIDE_DIST.max : FREE_ORBIT_LIMITS.maxDistance
+
+  // Bounds change as flags flip — keep targetDistance inside them.
+  useEffect(() => {
+    targetDistanceRef.current = THREE.MathUtils.clamp(
+      targetDistanceRef.current,
+      minDist,
+      maxDist,
+    )
+  }, [minDist, maxDist])
+
+  // sceneMode boop — set a temporary target offset; rest pull decays
+  // it back. cageWide is true during this window so the offset fits
+  // inside the relaxed bounds.
+  useEffect(() => {
+    if (prevSceneModeRef.current === sceneMode) return
+    prevSceneModeRef.current = sceneMode
+    targetDistanceRef.current = THREE.MathUtils.clamp(
+      defaultDistance + BOOP_AMOUNT,
+      minDist,
+      maxDist,
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sceneMode])
+
+  // Wheel listener on the canvas. preventDefault so the page doesn't
+  // scroll. passive:false is required to allow preventDefault.
+  useEffect(() => {
+    const dom = gl?.domElement
+    if (!dom) return
+    const onWheel = (event) => {
+      event.preventDefault()
+      const factor = Math.exp(event.deltaY * ZOOM_PER_PIXEL)
+      targetDistanceRef.current = THREE.MathUtils.clamp(
+        targetDistanceRef.current * factor,
+        minDist,
+        maxDist,
+      )
+      activityRef.current = 1
+    }
+    dom.addEventListener('wheel', onWheel, { passive: false })
+    return () => dom.removeEventListener('wheel', onWheel)
+  }, [gl, minDist, maxDist])
+
+  useFrame((_, delta) => {
+    if (!controls?.target) return
+
+    // First frame: sync target to whatever the camera is currently at,
+    // so the intro hand-off doesn't yank the camera. Also avoids a
+    // visible jump if defaultDistance differs from the live position.
+    if (!initRef.current) {
+      initRef.current = true
+      targetDistanceRef.current = camera.position.distanceTo(controls.target)
+    }
+
+    // Decay activity each frame.
+    activityRef.current = Math.max(
+      0,
+      activityRef.current - delta / ACTIVITY_DECAY_SEC,
+    )
+
+    // Rest pull — gentle drift of the target toward default, gated by
+    // the leva flags and weighted by how idle the user is.
+    if (!pauseReturn && !unlockCage) {
+      const idle = 1 - activityRef.current
+      targetDistanceRef.current +=
+        (defaultDistance - targetDistanceRef.current) * RETURN_RATE * delta * idle
+    }
+
+    // Re-clamp every frame in case bounds tightened (cageWide flipped).
+    if (targetDistanceRef.current < minDist) targetDistanceRef.current = minDist
+    else if (targetDistanceRef.current > maxDist) targetDistanceRef.current = maxDist
+
+    // Frame-rate-independent exp-lerp toward target.
+    const currentDist = camera.position.distanceTo(controls.target)
+    const k = 1 - Math.exp(-delta * SMOOTHING_RATE)
+    const newDist = currentDist + (targetDistanceRef.current - currentDist) * k
+
+    if (Math.abs(newDist - currentDist) > 1e-5) {
+      const dir = camera.position.clone().sub(controls.target).normalize()
+      camera.position.copy(controls.target).addScaledVector(dir, newDist)
+      controls.update()
+    }
+  })
+
+  return null
+}
+
+/**
  * After the user releases an orbit drag, springs the camera back to the
  * starting azimuth/polar. Underdamped so it overshoots and settles —
  * gives a "bounce" feel, especially when released at a cage limit.
  */
-function OrbitResetController({ orbitLimits, defaultCam, sceneMode }) {
+function OrbitResetController({ orbitLimits, defaultCam }) {
   const controls = useThree((s) => s.controls)
-  const camera = useThree((s) => s.camera)
   const draggingRef = useRef(false)
   const wheelEndTimerRef = useRef(null)
   const azVelRef = useRef(0)
   const polarVelRef = useRef(0)
-  const distVelRef = useRef(0)
-  // On every sceneMode change, kick the camera outward. Velocity 3.8
-  // produces a peak distance around 6 (rest ~3.2 + ~2.8) before the
-  // damped spring (STIFFNESS=4, DAMPING_RATIO=0.85) carries it back —
-  // gives the day/night toggle a "boop out and return" feel.
-  const prevSceneModeRef = useRef(sceneMode)
-  useEffect(() => {
-    if (prevSceneModeRef.current === sceneMode) return
-    prevSceneModeRef.current = sceneMode
-    distVelRef.current = 3.8
-  }, [sceneMode])
 
-  // Default azimuth + polar + distance derived from defaultCam position
-  // relative to target. The spring rests at these values.
+  // Default azimuth + polar derived from defaultCam position relative
+  // to target. The spring rests at these values. (Distance is owned by
+  // ZoomController now — its rest pull replaces this controller's
+  // distance leg.)
   const dx = defaultCam.posX - defaultCam.targetX
   const dy = defaultCam.posY - defaultCam.targetY
   const dz = defaultCam.posZ - defaultCam.targetZ
-  const targetDistance = Math.sqrt(dx * dx + dy * dy + dz * dz)
+  const targetMag = Math.sqrt(dx * dx + dy * dy + dz * dz)
   const targetAzimuth = Math.atan2(dx, dz)
-  const targetPolar = Math.acos(dy / targetDistance)
+  const targetPolar = Math.acos(dy / targetMag)
 
   // Spring tuning — softer + more damped than a typical spring. Lower
   // stiffness means a slower return; higher damping ratio means it
-  // settles without bouncing past the default. Distance gets its own
-  // stiffer constant so the longer travel back from maxDistance=7
-  // (~4 units from default) snaps as quickly as the rotation axes do
-  // over their tighter ranges.
+  // settles without bouncing past the default.
   const STIFFNESS = 4
-  const DIST_STIFFNESS = 9
   const DAMPING_RATIO = 0.85 // 1 = critical, <1 bouncy, >1 sluggish
   const dampingCoef = 2 * Math.sqrt(STIFFNESS) * DAMPING_RATIO
-  const distDampingCoef = 2 * Math.sqrt(DIST_STIFFNESS) * DAMPING_RATIO
 
   // On release, kick velocity AWAY from the cage limit if user was sitting
   // at it — sells the "tug at the wall" rubber-band feel before springing
   // back through the default.
   const EDGE_EPS = 0.005
   const REBOUND_KICK = 1.0 // rad/sec impulse magnitude (rotation)
-  const DIST_REBOUND_KICK = 2.0 // world-units/sec impulse magnitude (zoom)
 
   useEffect(() => {
     if (!controls) return
@@ -529,7 +646,6 @@ function OrbitResetController({ orbitLimits, defaultCam, sceneMode }) {
       draggingRef.current = true
       azVelRef.current = 0
       polarVelRef.current = 0
-      distVelRef.current = 0
     }
     const onEnd = () => {
       // OrbitControls fires start+end synchronously per wheel event, and
@@ -544,7 +660,6 @@ function OrbitResetController({ orbitLimits, defaultCam, sceneMode }) {
         // Apply a spring-back kick if we settled at a cage limit.
         const az = controls.getAzimuthalAngle()
         const polar = controls.getPolarAngle()
-        const dist = camera.position.distanceTo(controls.target)
         // With the elastic damper there's no hard wall — the user can
         // release anywhere, including well past the soft cage. Treat
         // "past soft" the same as "at the wall" but scale the kick by
@@ -567,20 +682,6 @@ function OrbitResetController({ orbitLimits, defaultCam, sceneMode }) {
         if (polarOver !== 0) {
           polarVelRef.current = Math.sign(polarOver) * (REBOUND_KICK + Math.abs(polarOver) * 4)
         }
-        const distEdge = EDGE_EPS * 4
-        const distOver =
-          orbitLimits.minDistance != null && dist < orbitLimits.minDistance - distEdge
-            ? orbitLimits.minDistance - dist
-            : orbitLimits.maxDistance != null && dist > orbitLimits.maxDistance + distEdge
-              ? -(dist - orbitLimits.maxDistance)
-              : orbitLimits.minDistance != null && Math.abs(dist - orbitLimits.minDistance) < distEdge
-                ? distEdge
-                : orbitLimits.maxDistance != null && Math.abs(dist - orbitLimits.maxDistance) < distEdge
-                  ? -distEdge
-                  : 0
-        if (distOver !== 0) {
-          distVelRef.current = Math.sign(distOver) * (DIST_REBOUND_KICK + Math.abs(distOver) * 2)
-        }
       }, 140)
     }
     controls.addEventListener('start', onStart)
@@ -593,44 +694,31 @@ function OrbitResetController({ orbitLimits, defaultCam, sceneMode }) {
         wheelEndTimerRef.current = null
       }
     }
-  }, [controls, camera, orbitLimits])
+  }, [controls, orbitLimits])
 
   useFrame((_, delta) => {
     if (!controls || draggingRef.current) return
     if (typeof controls.getAzimuthalAngle !== 'function') return
     const currentAz = controls.getAzimuthalAngle()
     const currentPolar = controls.getPolarAngle()
-    const currentDist = camera.position.distanceTo(controls.target)
-    // Bail when all three components are settled.
+    // Bail when both rotation components are settled.
     const azDelta = targetAzimuth - currentAz
     const polarDelta = targetPolar - currentPolar
-    const distDelta = targetDistance - currentDist
     if (
       Math.abs(azDelta) < 1e-4 && Math.abs(azVelRef.current) < 1e-4 &&
-      Math.abs(polarDelta) < 1e-4 && Math.abs(polarVelRef.current) < 1e-4 &&
-      Math.abs(distDelta) < 1e-3 && Math.abs(distVelRef.current) < 1e-3
+      Math.abs(polarDelta) < 1e-4 && Math.abs(polarVelRef.current) < 1e-4
     ) {
       azVelRef.current = 0
       polarVelRef.current = 0
-      distVelRef.current = 0
       return
     }
     // Spring-damper integration (semi-implicit Euler).
     const azAccel = STIFFNESS * azDelta - dampingCoef * azVelRef.current
     const polarAccel = STIFFNESS * polarDelta - dampingCoef * polarVelRef.current
-    const distAccel = DIST_STIFFNESS * distDelta - distDampingCoef * distVelRef.current
     azVelRef.current += azAccel * delta
     polarVelRef.current += polarAccel * delta
-    distVelRef.current += distAccel * delta
     controls.setAzimuthalAngle(currentAz + azVelRef.current * delta)
     controls.setPolarAngle(currentPolar + polarVelRef.current * delta)
-    // Distance: scale the camera's offset from target to the new radius.
-    const newDist = currentDist + distVelRef.current * delta
-    if (Math.abs(newDist - currentDist) > 1e-5) {
-      const dir = camera.position.clone().sub(controls.target).normalize()
-      camera.position.copy(controls.target).addScaledVector(dir, newDist)
-      controls.update()
-    }
   })
 
   return null
@@ -1406,13 +1494,10 @@ export default function CrtScene({
               <OrbitControls
                 makeDefault
                 enabled={!introActive}
-                enableZoom={enableZoom}
+                enableZoom={false}
                 enablePan={enablePan}
                 enableDamping
-                // Higher dampingFactor + lower zoomSpeed = silky inertial
-                // wheel zoom that decays slowly instead of snapping.
                 dampingFactor={0.18}
-                zoomSpeed={0.1}
                 panSpeed={0.6}
                 rotateSpeed={0.7}
                 target={[cam.targetX, cam.targetY, cam.targetZ]}
@@ -1420,18 +1505,28 @@ export default function CrtScene({
                 // azimuth and polar past the soft cage. Polar high-end
                 // uses a much stiffer damping coefficient so the camera
                 // can't practically reach the under-floor angle range.
-                // Zoom keeps the classic hard clamp + on-release spring.
+                // Zoom is owned by ZoomController; OrbitControls' own
+                // dolly is disabled so it can't fight the integrator.
                 minAzimuthAngle={-Math.PI}
                 maxAzimuthAngle={Math.PI}
                 minPolarAngle={0.01}
                 maxPolarAngle={Math.PI - 0.01}
-                minDistance={(cageWide || unlockCage) ? 0.1 : FREE_ORBIT_LIMITS.minDistance}
-                maxDistance={(cageWide || unlockCage) ? 50 : FREE_ORBIT_LIMITS.maxDistance}
+                minDistance={(cageWide || unlockCage) ? CAGE_WIDE_DIST.min : FREE_ORBIT_LIMITS.minDistance}
+                maxDistance={(cageWide || unlockCage) ? CAGE_WIDE_DIST.max : FREE_ORBIT_LIMITS.maxDistance}
               />
               {!introActive && !cageWide && !unlockCage && (
                 <ElasticOrbitLimits soft={FREE_ORBIT_LIMITS} ramp={FREE_ORBIT_RAMP} />
               )}
-              {!introActive && !pauseReturn && <OrbitResetController orbitLimits={FREE_ORBIT_LIMITS} defaultCam={cam} sceneMode={sceneMode} />}
+              {!introActive && enableZoom && (
+                <ZoomController
+                  defaultCam={cam}
+                  sceneMode={sceneMode}
+                  cageWide={cageWide}
+                  unlockCage={unlockCage}
+                  pauseReturn={pauseReturn}
+                />
+              )}
+              {!introActive && !pauseReturn && <OrbitResetController orbitLimits={FREE_ORBIT_LIMITS} defaultCam={cam} />}
               {introActive && (
                 <CameraIntro
                   introCam={INTRO_CAM}
