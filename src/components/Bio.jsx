@@ -10,7 +10,7 @@ const TYPE_SPEED_MS = isMobile ? 9 : 18 // per character — snappy but readable
 const BODY_START_DELAY_MS = isMobile ? 2850 : 6100 // delay-3 + typing duration
 
 function TypingBody({ currentRole }) {
-  const text = `Designer who codes. Obsessed with craft and novel ways of interacting with computers. Currently leading design at ${currentRole.label}.`
+  const text = `Designer who codes. Obsessed with craft and novel ways of interacting with computers. Building agentic frameworks for AI wearables at ${currentRole.label}.`
   const linkStart = text.indexOf(currentRole.label)
   const linkEnd = linkStart + currentRole.label.length
   const [chars, setChars] = useState(0)

@@ -7,7 +7,7 @@ const PROFILE = {
   role: 'PRODUCT DESIGNER',
   location: 'NEW YORK CITY, NY',
   focus: 'SPATIAL COMPUTING & AGENTIC AI',
-  currentRole: { label: 'ShapesXR', href: 'https://www.shapesxr.com/' },
+  currentRole: { label: 'ShapesXR', href: 'https://www.shapesxr.com/ai' },
 }
 
 const FOOTER_LINKS = [
