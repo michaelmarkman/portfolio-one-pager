@@ -1,6 +1,6 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { ContactShadows, Environment, Grid, OrbitControls, useProgress } from '@react-three/drei'
+import { ContactShadows, Environment, Grid, OrbitControls } from '@react-three/drei'
 import { Leva, useControls, folder } from 'leva'
 import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
@@ -1037,32 +1037,41 @@ function FilmGrainPostFX({ intensity = 0.15, grayscale = false }) {
 
 /**
  * Full-viewport boot overlay. Visibility is latched on `modelReady` (set
- * by CrtModel after its first render frame), NOT on useProgress.active —
- * the loader queue can flip idle while Three.js is still compiling shaders
- * and a second asset (the lobby HDR) can kick a new load mid-gap, both of
- * which would otherwise cause the overlay to flicker.
+ * by CrtModel after its first render frame, or by CrtScene's safety
+ * timeout if the model never loads/renders).
  *
- * The % counter tracks the highest progress value we've ever seen, so it
- * only climbs — drei's raw progress drops mid-flight when a new asset
- * joins the queue and the loaded/total ratio re-bases.
+ * We deliberately don't show a percentage — drei's `useProgress` counts
+ * THREE.LoadingManager items, not bytes, so with one huge GLB and a
+ * handful of small extras the number spikes to ~100% the moment a
+ * small asset finishes and then sits there for the rest of the GLB
+ * download. That reads as "frozen" to the user. Instead we show
+ * `BOOTING…` plus three CSS-animated dots that cycle while we wait —
+ * indeterminate and honest. After ~8 s the overlay becomes clickable
+ * as an escape hatch in case something has gone wrong.
  */
-function LoadingOverlay({ modelReady }) {
-  const { progress } = useProgress()
-  const [peak, setPeak] = useState(0)
+function LoadingOverlay({ modelReady, onForceReady }) {
+  const [canDismiss, setCanDismiss] = useState(false)
   useEffect(() => {
-    setPeak((prev) => (progress > prev ? progress : prev))
-  }, [progress])
-  const display = modelReady ? 100 : peak
+    if (modelReady) return
+    const t = setTimeout(() => setCanDismiss(true), 8000)
+    return () => clearTimeout(t)
+  }, [modelReady])
+
   return (
     <div
-      className="boot-overlay"
+      className={`boot-overlay${canDismiss ? ' boot-overlay--dismissable' : ''}`}
       style={{
         opacity: modelReady ? 0 : 1,
         pointerEvents: modelReady ? 'none' : 'auto',
       }}
+      onClick={canDismiss && !modelReady ? onForceReady : undefined}
     >
-      <div>BOOTING…</div>
-      <div className="boot-progress">{Math.round(display)}%</div>
+      <div className="boot-overlay__title">
+        BOOTING<span className="boot-overlay__dots" aria-hidden="true">…</span>
+      </div>
+      {canDismiss && !modelReady && (
+        <div className="boot-overlay__hint">click to continue</div>
+      )}
     </div>
   )
 }
@@ -1143,6 +1152,16 @@ export default function CrtScene({
   const bgLift = filmGrain?.enabled ? Math.min(0.3, (filmGrain.intensity ?? 0.15) * 0.7) : 0
   const [modelReady, setModelReady] = useState(false)
   const handleModelReady = useCallback(() => setModelReady(true), [])
+  // Hard safety net: even if the GLB never loads or the render loop
+  // never fires the 2-frame happy-path signal, hide the overlay after
+  // 25 s so the visitor isn't trapped on a "BOOTING…" screen forever.
+  // Has to live HERE (not inside CrtModel) so it starts at app mount,
+  // independent of the Suspense barrier on the GLB fetch.
+  useEffect(() => {
+    if (modelReady) return
+    const t = setTimeout(() => setModelReady(true), 25000)
+    return () => clearTimeout(t)
+  }, [modelReady])
   // introActive covers JUST the hold phase. After hold, OrbitControls
   // becomes interactable, parallax/bob/spring all mount, and the spring
   // runs the actual fly-in.
@@ -1241,7 +1260,7 @@ export default function CrtScene({
   return (
     <>
       <Leva hidden={!showLeva} titleBar={{ title: 'Tune' }} collapsed={false} />
-      <LoadingOverlay modelReady={modelReady} />
+      <LoadingOverlay modelReady={modelReady} onForceReady={handleModelReady} />
       <div className="source-mask" aria-hidden="true" />
       <div className="phosphor-glow" aria-hidden="true" />
       <div className="three-stage" style={canvasFilter ? { filter: canvasFilter } : undefined}>

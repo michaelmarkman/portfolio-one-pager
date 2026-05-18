@@ -3,6 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Start fetching the 3D model the instant the browser parses head,
+         in parallel with the JS chunks Vite produces. By the time CrtScene
+         mounts and useGLTF requests this URL, the browser cache already
+         has it. -->
+    <link rel="preload" as="fetch" href="/apple2-4k-compressed.glb" crossorigin />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Michael Markman — Product Designer</title>
     <meta name="description" content="Designer who codes. Obsessed with craft and novel ways of interacting with computers. Building agentic frameworks for AI wearables at ShapesXR." />

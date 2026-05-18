@@ -34,6 +34,15 @@ body {
   font-smooth: never;
   line-height: 1.5;
   overflow: hidden;
+  /* Pixel-art custom cursors. The 3D canvas inside .three-stage overrides
+     these imperatively via JS so the cursor flips to the pointing hand
+     when a raycast lands on a link/button. */
+  cursor: url('/cursor-arrow.svg') 3 3, default;
+}
+a,
+button,
+[role='button'] {
+  cursor: url('/cursor-point.svg') 13 3, pointer;
 }
 
 /* Inside the iframe (?embed=1), keep the deep terminal black, not the room lift. */
@@ -720,8 +729,8 @@ a {
 }
 
 /* Boot overlay — full-viewport CRT-styled loading screen shown while the
-   GLB + scene assets are still loading. Opacity is driven from JS via
-   useProgress.active; the transition runs the fade. */
+   GLB + scene assets are still loading. Opacity is JS-driven (latched on
+   `modelReady`); the transition runs the fade. */
 .boot-overlay {
   position: fixed;
   inset: 0;
@@ -738,10 +747,39 @@ a {
   letter-spacing: 0.08em;
   transition: opacity 0.4s ease;
 }
-.boot-progress {
+.boot-overlay--dismissable {
+  cursor: pointer;
+}
+.boot-overlay__title {
+  display: inline-flex;
+  align-items: baseline;
+}
+/* Animated trailing dots — three ellipsis chars cycling visibility in
+   step. The label reads "BOOTING…" with the dots fading in one-by-one
+   then resetting, giving an indeterminate progress feel while we wait
+   for the GLB + first paint. */
+.boot-overlay__dots {
+  display: inline-block;
+  width: 1.5em;
+  overflow: hidden;
+  vertical-align: bottom;
+  letter-spacing: 0.15em;
+  animation: boot-dots 1.2s steps(4, end) infinite;
+}
+@keyframes boot-dots {
+  0%   { clip-path: inset(0 100% 0 0); }
+  25%  { clip-path: inset(0 66% 0 0); }
+  50%  { clip-path: inset(0 33% 0 0); }
+  75%  { clip-path: inset(0 0 0 0); }
+  100% { clip-path: inset(0 100% 0 0); }
+}
+.boot-overlay__hint {
+  margin-top: 0.4rem;
   font-weight: 400;
-  font-size: 13px;
-  opacity: 0.75;
+  font-size: 11px;
+  opacity: 0.5;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 

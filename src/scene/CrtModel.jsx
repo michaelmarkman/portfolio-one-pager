@@ -95,8 +95,10 @@ export default function CrtModel({
   // Fire onModelReady after the model has been rendered at least once. R3F
   // calls useFrame BEFORE each renderer.render(), so by the 2nd useFrame the
   // first (slow) compile-+-draw is behind us and the model is on screen.
-  // Latched via ref so we only signal once. setTimeout fallback covers the
-  // edge case where the render loop is paused before we hit 2 frames.
+  // Latched via ref so we only signal once. The hard safety-net timeout
+  // lives in CrtScene now (it has to start at app mount, not after the
+  // Suspense barrier resolves — otherwise a slow GLB download starves the
+  // overlay of its safety net for the entire fetch).
   const readyFiredRef = useRef(false)
   const frameCountRef = useRef(0)
   useFrame(() => {
@@ -107,16 +109,6 @@ export default function CrtModel({
       onModelReady()
     }
   })
-  useEffect(() => {
-    if (!onModelReady) return
-    const t = setTimeout(() => {
-      if (!readyFiredRef.current) {
-        readyFiredRef.current = true
-        onModelReady()
-      }
-    }, 3000)
-    return () => clearTimeout(t)
-  }, [onModelReady])
   const camera = useThree((s) => s.camera)
   const gl = useThree((s) => s.gl)
   const raycaster = useThree((s) => s.raycaster)
@@ -414,7 +406,7 @@ export default function CrtModel({
 
   // Per-frame: sync uniforms from leva, drive time, run hover raycaster, and
   // re-apply screen/glass forward offset (cheap; lets the slider move live).
-  useFrame((state) => {
+  useFrame((state, delta) => {
     if (materialRef.current) {
       const u = materialRef.current.uniforms
       u.uTime.value = state.clock.elapsedTime
@@ -536,7 +528,12 @@ export default function CrtModel({
   })
 
   useEffect(() => {
-    gl.domElement.style.cursor = interaction.hovering ? 'pointer' : ''
+    // Custom pixel-art cursors. Arrow is the default over the canvas;
+    // pointing-hand takes over when the raycast lands on an interactive
+    // DOM element inside the rasterized screen.
+    gl.domElement.style.cursor = interaction.hovering
+      ? "url('/cursor-point.svg') 13 3, pointer"
+      : "url('/cursor-arrow.svg') 3 3, default"
   }, [interaction.hovering, gl])
 
   if (modelTransform) {
