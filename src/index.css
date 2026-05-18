@@ -584,6 +584,21 @@ a {
 
 /* ---------- Prompt + cursor ---------- */
 
+/* Interactive terminal wrapper. Older entries are trimmed from React
+   state once the total line count exceeds the visible window (see
+   MAX_VISIBLE_LINES in InteractiveTerminal.jsx) — html-to-image
+   clones the DOM with scrollTop=0 so a CSS scroll approach captures
+   the wrong frame; trimming keeps the captured DOM small. */
+.terminal-shell {
+  display: flex;
+  flex-direction: column;
+}
+.terminal-shell__in,
+.terminal-shell__out {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .prompt {
   margin-top: 1rem;
   display: flex;

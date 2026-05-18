@@ -1,6 +1,6 @@
 import TypewriterLine from './TypewriterLine.jsx'
 import Bio from './Bio.jsx'
-import Prompt from './Prompt.jsx'
+import InteractiveTerminal from './InteractiveTerminal.jsx'
 import SystemLog from './SystemLog.jsx'
 
 export default function Terminal({
@@ -24,7 +24,7 @@ export default function Terminal({
 
         <Bio location={location} focus={focus} currentRole={currentRole} />
 
-        <Prompt />
+        <InteractiveTerminal />
 
         {showSystemLog && <SystemLog />}
       </div>

@@ -1,4 +1,5 @@
 import { track } from '@vercel/analytics'
+import { playSfx } from '../lib/sfx.js'
 import BackgroundAudio from './BackgroundAudio.jsx'
 import DayNightToggle from './DayNightToggle.jsx'
 
@@ -47,7 +48,10 @@ export default function SiteFooter({
                 target="_blank"
                 rel="noreferrer"
                 aria-label={icon ? label : undefined}
-                onClick={() => track('link_click', { label })}
+                onClick={() => {
+                  playSfx('click')
+                  track('link_click', { label })
+                }}
               >
                 {icon ?? `[ ${label} ]`}
               </a>

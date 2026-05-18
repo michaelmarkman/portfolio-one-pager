@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useControls, folder } from 'leva'
 import { track } from '@vercel/analytics'
+import { playSfx } from './lib/sfx.js'
 import HtmlSource from './scene/HtmlSource.jsx'
 import CrtScene from './scene/CrtScene.jsx'
 
@@ -235,6 +236,7 @@ export default function Lab() {
     if (next === 'cozy') {
       setCozyPalette((p) => (p === 'amber-inverted' ? 'amber' : 'amber-inverted'))
     }
+    playSfx('thunk')
     setT({ sceneMode: next })
     // Tracked here only — the daytime auto-flip in the useEffect below
     // calls setT directly so it doesn't fire this analytics event.

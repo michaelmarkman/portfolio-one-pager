@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import TypewriterLine from './TypewriterLine.jsx'
+import { playSfx } from '../lib/sfx.js'
 
 // Mobile gets the embedded terminal view; the CSS typewriter durations
 // are halved there too, so we mirror the speedup here.
@@ -21,12 +22,16 @@ function TypingBody({ currentRole }) {
       const id = setInterval(() => {
         i += 1
         setChars(i)
+        // Real keyboard sample per visible character. Skip whitespace
+        // so the loop doesn't sound like a constant rattle.
+        const ch = text[i - 1]
+        if (ch && ch !== ' ' && ch !== '\n') playSfx('keytick')
         if (i >= text.length) clearInterval(id)
       }, TYPE_SPEED_MS)
       return () => clearInterval(id)
     }, BODY_START_DELAY_MS)
     return () => clearTimeout(start)
-  }, [text.length])
+  }, [text])
 
   // Reserve full layout space upfront so LOCATION below doesn't shift up
   // as the bio types out; render the visible portion as text, swapping

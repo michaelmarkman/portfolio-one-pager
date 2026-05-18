@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { track } from '@vercel/analytics'
+import { playSfx, setSfxMuted } from '../lib/sfx.js'
 
 /**
  * Background audio with a fixed-position mute toggle. Tries to autoplay
@@ -18,12 +19,13 @@ const SWAP_DELAY_MS = 1000
 export default function BackgroundAudio({ src, scratchSrc = '/scratch.mp3', volume = 0.18 }) {
   const audioRefs = useRef(new Map())
   const scratchRef = useRef(null)
-  // `audible` is the source of truth for the icon — it derives from the
-  // active audio element's actual play/pause/volumechange events rather
-  // than a separate React mute flag. Anything that pauses or mutes the
-  // element (visibility change, autoplay rejection, src swap, manual
-  // toggle) flows through these events, so the icon never lies.
-  const [audible, setAudible] = useState(false)
+  // `audible` is the source of truth for the icon. Defaults to true
+  // so the page doesn't load with a "muted" icon (we always *try* to
+  // autoplay unmuted; if the browser blocks until first gesture, the
+  // gesture-fallback path below still flips the audio on without ever
+  // having reported a muted state). The play/pause/volumechange
+  // listeners below keep it honest after any subsequent change.
+  const [audible, setAudible] = useState(true)
   // Set of every src seen so far — we render one <audio> per entry so
   // each track keeps its own currentTime independently.
   const [knownSrcs, setKnownSrcs] = useState(() => new Set([src]))
@@ -59,15 +61,13 @@ export default function BackgroundAudio({ src, scratchSrc = '/scratch.mp3', volu
     if (!audio) return
     audio.volume = volume
     audio.muted = false
-    audio.play().catch(() => {
-      const start = () => {
-        audio.muted = false
-        audio.volume = volume
-        audio.play().catch(() => {})
-      }
-      window.addEventListener('pointerdown', start, { once: true })
-      window.addEventListener('keydown', start, { once: true })
-    })
+    // Try autoplay, but don't attach a global "any gesture starts it"
+    // fallback — that listener was racing the audio-toggle click and
+    // pre-starting the loop just before the toggle handler ran, so the
+    // toggle would see "already playing" and immediately mute. The
+    // toggle click is itself a valid user gesture; the toggle handler
+    // starts audio directly when the user wants it on.
+    audio.play().catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -78,7 +78,9 @@ export default function BackgroundAudio({ src, scratchSrc = '/scratch.mp3', volu
     const audio = audioRefs.current.get(src)
     if (!audio) return
     const sync = () => setAudible(!audio.paused && !audio.muted)
-    sync()
+    // Skip the immediate sync — at mount the audio element is still
+    // paused while play() resolves, and we don't want the icon to flash
+    // muted before the autoplay attempt actually completes.
     audio.addEventListener('play', sync)
     audio.addEventListener('pause', sync)
     audio.addEventListener('volumechange', sync)
@@ -145,13 +147,18 @@ export default function BackgroundAudio({ src, scratchSrc = '/scratch.mp3', volu
     // thing relative to whatever's actually playing right now. The
     // 'play'/'pause'/'volumechange' listeners then sync `audible` back.
     if (!audio.paused && !audio.muted) {
+      // Click feedback before we silence everything.
+      playSfx('click')
       audio.muted = true
       audio.pause()
+      setSfxMuted(true)
       track('audio_mute')
     } else {
       audio.muted = false
       audio.volume = volume
       audio.play().catch(() => {})
+      setSfxMuted(false)
+      playSfx('click')
       track('audio_unmute')
     }
   }
